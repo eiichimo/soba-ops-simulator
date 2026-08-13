@@ -20,6 +20,7 @@ export type PeriodKey = 'day' | 'month' | 'quarter' | 'halfYear' | 'year'
 export type LaborCostTreatment = 'withinScheduledShift' | 'additionalLabor'
 export type LaborCostMode = 'accounting' | 'decision'
 export type ValidationSeverity = 'error' | 'warning'
+export type InventoryLotSource = 'purchase' | 'processOutput' | 'openingInventory' | 'byProduct' | 'carryOver'
 
 export interface Resource {
   id: string
@@ -119,9 +120,45 @@ export interface InventoryEntry {
   shelfLifeDays: number
 }
 
+export interface OpeningInventoryLot {
+  id: string
+  sourceType: 'resource' | 'output'
+  sourceId: string
+  quantity: number
+  unit: Unit
+  acquiredDate: string
+  expiryDate?: string
+  unitCost?: number
+}
+
+export interface InventoryCostComponents {
+  directIngredients: number
+  prepMaterials: number
+  prepLabor: number
+  water: number
+  gas: number
+  electricity: number
+  fryingOil: number
+}
+
+export interface InventoryLot {
+  id: string
+  sourceType: 'resource' | 'output'
+  sourceId: string
+  quantity: number
+  unit: Unit
+  acquiredDate: string
+  expiryDate?: string
+  unitCost: number
+  purchaseCost: number
+  source: InventoryLotSource
+  costComponents?: InventoryCostComponents
+}
+
 export interface InventorySettings {
   carryOverEnabled: boolean
   entries: InventoryEntry[]
+  openingLots: OpeningInventoryLot[]
 }
 
 export interface UtilityUse {
@@ -140,6 +177,7 @@ export interface UtilityConfig {
 }
 
 export interface FryingOilConfig {
+  inventoryResourceId?: string
   unitPricePerL: number
   initialFillL: number
   dailyTopUpL: number
@@ -270,6 +308,79 @@ export interface CalculationDetails {
   fryingOilCost: number
 }
 
+export interface PurchaseRecord {
+  id: string
+  date: string
+  resourceId: string
+  resourceName: string
+  packages: number
+  purchasedQuantity: number
+  stockedQuantity: number
+  unit: Unit
+  expenditure: number
+}
+
+export interface InventoryWasteRecord {
+  id: string
+  date: string
+  sourceType: 'resource' | 'output' | 'process'
+  sourceId: string
+  name: string
+  quantity: number
+  unit?: Unit
+  cost: number
+  reason: WasteReason
+}
+
+export interface InventoryDailyMovement {
+  date: string
+  openingQuantity: number
+  purchasedQuantity: number
+  producedQuantity: number
+  byProductQuantity: number
+  consumedQuantity: number
+  wastedQuantity: number
+  endingQuantity: number
+}
+
+export interface InventoryItemSummary {
+  sourceType: 'resource' | 'output'
+  sourceId: string
+  name: string
+  unit: Unit
+  openingQuantity: number
+  purchasedQuantity: number
+  producedQuantity: number
+  byProductQuantity: number
+  consumedQuantity: number
+  wastedQuantity: number
+  endingQuantity: number
+  openingValue: number
+  endingValue: number
+  usageCost: number
+  wasteCost: number
+  purchaseExpenditure: number
+  productionValue: number
+  oldestAcquiredDate?: string
+  nearestExpiryDate?: string
+  endingLots: InventoryLot[]
+  dailyMovements: InventoryDailyMovement[]
+}
+
+export interface InventorySimulationResult {
+  usageCost: number
+  purchaseExpenditure: number
+  openingInventoryValue: number
+  endingInventoryValue: number
+  wasteCost: number
+  purchaseCount: number
+  simpleCashFlow: number
+  items: InventoryItemSummary[]
+  purchases: PurchaseRecord[]
+  wastes: InventoryWasteRecord[]
+  endingLots: InventoryLot[]
+}
+
 export interface CalendarSummary {
   startDate: string
   endDateExclusive: string
@@ -311,6 +422,7 @@ export interface SimulationResult {
   menuRatioTotal: number
   labor: LaborBreakdown
   details: CalculationDetails
+  inventory: InventorySimulationResult
 }
 
 export interface MakeBuyResult {
@@ -329,4 +441,9 @@ export interface MakeBuyResult {
   breakEvenMealsPerDay: number | null
   homemadeLaborAllocation: number
   homemadeMarginalLabor: number
+  homemadeWasteCost: number
+  purchasedWasteCost: number
+  blendedWasteCost: number
+  homemadeEndingInventoryValue: number
+  purchasedEndingInventoryValue: number
 }

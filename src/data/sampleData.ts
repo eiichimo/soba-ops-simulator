@@ -35,7 +35,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
@@ -68,7 +68,7 @@ export const createSampleSettings = (): AppSettings => ({
     resource('prepared-kaeshi', '既製かえし', 'prepared', 1, 'L', 800, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('bonito', 'かつお節', 'seasoning', 1_000, 'g', 3_500, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('kombu', '昆布', 'seasoning', 1_000, 'g', 4_000, 1, { storageType: 'ambient', shelfLifeDays: 365 }),
-    resource('shrimp', '海老', 'seafood', 10, '本', 980, 0.95, { storageType: 'frozen', shelfLifeDays: 90 }),
+    resource('shrimp', '海老', 'seafood', 40, '本', 4_000, 1, { storageType: 'frozen', shelfLifeDays: 90 }),
     resource('flour', '小麦粉', 'seasoning', 1_000, 'g', 300, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('frying-oil-resource', '揚げ油（工程投入）', 'oil', 18, 'L', 6_840, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
   ],
@@ -77,8 +77,8 @@ export const createSampleSettings = (): AppSettings => ({
       id: 'homemade-kaeshi-process',
       name: '内製かえし仕込み',
       inputs: [input('resource', 'soy-sauce', 3, 'L'), input('resource', 'mirin', 1, 'L'), input('resource', 'sugar', 800, 'g')],
-      outputs: [{ id: 'homemade-kaeshi', name: '内製かえし', quantity: 4, unit: 'L', costAllocation: 1, storageType: 'refrigerated', shelfLifeDays: 30 }],
-      batchSize: 4,
+      outputs: [{ id: 'homemade-kaeshi', name: '内製かえし', quantity: 5, unit: 'L', costAllocation: 1, storageType: 'refrigerated', shelfLifeDays: 30 }],
+      batchSize: 5,
       processDurationMinutes: 90,
       activeLaborMinutes: 20,
       laborRole: 'cook',
@@ -156,7 +156,7 @@ export const createSampleSettings = (): AppSettings => ({
     {
       id: 'shrimp-tempura-process',
       name: '海老天揚げ',
-      inputs: [input('resource', 'shrimp', 10, '本'), input('resource', 'flour', 250, 'g'), input('resource', 'frying-oil-resource', 0.25, 'L')],
+      inputs: [input('resource', 'shrimp', 10, '本'), input('resource', 'flour', 250, 'g')],
       outputs: [
         { id: 'homemade-shrimp-tempura', name: '海老天（内製）', quantity: 10, unit: '本', costAllocation: 1, storageType: 'refrigerated', shelfLifeDays: 1 },
         { id: 'tempura-crumbs-output', name: '揚げ玉（副産物）', quantity: 150, unit: 'g', costAllocation: 0, storageType: 'refrigerated', shelfLifeDays: 2 },
@@ -233,6 +233,7 @@ export const createSampleSettings = (): AppSettings => ({
     },
   },
   fryingOil: {
+    inventoryResourceId: 'frying-oil-resource',
     unitPricePerL: 380,
     initialFillL: 15,
     dailyTopUpL: 0.8,
@@ -256,8 +257,9 @@ export const createSampleSettings = (): AppSettings => ({
     unit: 'L',
   },
   inventory: {
-    carryOverEnabled: false,
+    carryOverEnabled: true,
     entries: [],
+    openingLots: [],
   },
 })
 

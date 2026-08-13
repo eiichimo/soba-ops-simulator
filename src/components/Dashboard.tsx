@@ -56,6 +56,7 @@ export const ResultsTable = ({ result }: { result: SimulationResult }) => {
     <div className="result-total"><span>総コスト</span><strong>{formatYen(result.totalCost)}</strong></div>
     <div><span>粗利益</span><strong>{formatYen(result.grossProfit)}</strong></div>
     <div className="result-profit"><span>営業利益</span><strong>{formatYen(result.operatingProfit)}</strong></div>
+    <div className="result-allocation"><span>購入支出（費用へ非加算）</span><strong>{formatYen(result.inventory.purchaseExpenditure)}</strong></div>
     <div className="result-allocation"><span>仕込み作業配賦額（非加算）</span><strong>{formatYen(result.labor.prepLaborAllocation)}</strong></div>
     <div className="result-allocation"><span>限界人件費（意思決定）</span><strong>{formatYen(result.labor.marginalPrepLaborCost)}</strong></div>
   </div>
@@ -81,6 +82,12 @@ const CalculationDetails = ({ result }: { result: SimulationResult }) => <detail
       <div><span>電力</span><b>{formatNumber(result.details.utilities.electricity.quantity, 2)} kWh</b><strong>{formatYen(result.details.utilities.electricity.usageCost)}</strong></div>
       <div><span>揚げ油</span><b>{formatNumber(result.details.fryingOilLiters, 2)} L</b><strong>{formatYen(result.details.fryingOilCost)}</strong></div>
     </div></section>
+    <section><h3>Resource / Output別 在庫フロー</h3><div className="resource-table-wrap"><table className="resource-table inventory-detail-table">
+      <thead><tr><th>在庫品</th><th>期首</th><th>購入</th><th>内製</th><th>副産物</th><th>使用</th><th>廃棄</th><th>期末</th><th>使用原価</th><th>購入支出</th></tr></thead>
+      <tbody>{result.inventory.items.filter((item) => item.openingQuantity + item.purchasedQuantity + item.producedQuantity + item.byProductQuantity + item.consumedQuantity + item.wastedQuantity + item.endingQuantity > 0).map((item) => <tr key={`${item.sourceType}:${item.sourceId}`}>
+        <td><strong>{item.name}</strong></td><td>{formatNumber(item.openingQuantity, 2)}</td><td>{formatNumber(item.purchasedQuantity, 2)}</td><td>{formatNumber(item.producedQuantity, 2)}</td><td>{formatNumber(item.byProductQuantity, 2)}</td><td>{formatNumber(item.consumedQuantity, 2)}</td><td>{formatNumber(item.wastedQuantity, 2)}</td><td>{formatNumber(item.endingQuantity, 2)} {item.unit}</td><td>{formatYen(item.usageCost)}</td><td>{formatYen(item.purchaseExpenditure)}</td>
+      </tr>)}</tbody>
+    </table></div></section>
   </div>
 </details>
 
@@ -88,7 +95,11 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
   const result = simulate(settings, period)
   const day = simulate(settings, 'day')
   const breakEven = createVolumeSeries(settings).find((item) => item.profit >= 0)?.meals
-  const validationIssues = validateSettings(settings)
+  const runtimeWarnings = [
+    ...(result.inventory.wasteCost > Math.max(1_000, result.inventory.usageCost * 0.25) ? [{ severity: 'warning' as const, code: 'high-inventory-waste', message: `期間中の廃棄原価が${formatYen(result.inventory.wasteCost)}です。保存期限・仕込みバッチ・購入packageを確認してください。`, path: undefined }] : []),
+    ...(result.inventory.endingInventoryValue > Math.max(result.revenue, result.inventory.purchaseExpenditure * 2, 100_000) ? [{ severity: 'warning' as const, code: 'large-ending-inventory', message: `期末在庫価額が${formatYen(result.inventory.endingInventoryValue)}です。過剰在庫の可能性があります。`, path: undefined }] : []),
+  ]
+  const validationIssues = [...validateSettings(settings), ...runtimeWarnings]
   const validationErrors = validationIssues.filter((validationIssue) => validationIssue.severity === 'error')
   const validationWarnings = validationIssues.filter((validationIssue) => validationIssue.severity === 'warning')
   const variableFood = result.costs.directIngredients + result.costs.prepMaterials + result.costs.fryingOil + result.costs.waste
@@ -114,6 +125,17 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
       <KpiCard label="1食平均原価" value={formatYen(result.averageCostPerMeal)} note={`限界原価 ${formatYen(result.marginalCostPerMeal)}`} />
       <KpiCard label="1時間あたり利益" value={formatYen(result.profitPerOperatingHour)} note={`1営業日 ${formatYen(result.profitPerOperatingDay)}`} />
     </div>
+
+    <div className="inventory-kpi-grid dashboard-inventory-kpis">
+      <div><span>使用原価</span><strong>{formatYen(result.inventory.usageCost)}</strong><small>販売へ払い出した在庫価額</small></div>
+      <div><span>購入支出</span><strong>{formatYen(result.inventory.purchaseExpenditure)}</strong><small>{result.inventory.purchaseCount}回購入</small></div>
+      <div><span>期首在庫価額</span><strong>{formatYen(result.inventory.openingInventoryValue)}</strong><small>開始日時点</small></div>
+      <div><span>期末在庫価額</span><strong>{formatYen(result.inventory.endingInventoryValue)}</strong><small>次期間へ持越し</small></div>
+      <div><span>廃棄原価</span><strong>{formatYen(result.inventory.wasteCost)}</strong><small>spoilage・工程ロス</small></div>
+      <div className="cash"><span>簡易現金収支</span><strong>{formatYen(result.inventory.simpleCashFlow)}</strong><small>正式なCFではありません</small></div>
+    </div>
+
+    <div className="cash-flow-note"><Icon name="info" size={18}/><p><strong>利益と現金の差</strong><span>営業利益は使用した在庫価額を費用とし、簡易現金収支は購入日にpackage代金を全額支出します。期末在庫が残ると両者に差が生じます。</span></p><b>{formatYen(result.inventory.simpleCashFlow - result.operatingProfit)}</b></div>
 
     <div className="dashboard-grid">
       <Panel className="chart-panel" title="販売食数と採算ライン" caption="日次の営業利益と、固定費を含む1食平均原価">

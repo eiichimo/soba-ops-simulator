@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { ComparisonEditor, DataManager, LaborEditor, MenuEditor, OperationsEditor, ProcessesEditor, ResourcesEditor, UtilitiesEditor } from './components/Editors'
+import { InventoryEditor } from './components/InventoryEditor'
 import { Icon, type IconName } from './components/ui'
 import { createSampleSettings } from './data/sampleData'
 import type { AppSettings, PeriodKey } from './models/types'
 import { loadSettings, parseSettingsJson, saveSettings } from './storage/settingsStorage'
 
-type PageKey = 'dashboard' | 'operations' | 'menus' | 'resources' | 'processes' | 'labor' | 'utilities' | 'comparison' | 'data'
+type PageKey = 'dashboard' | 'operations' | 'menus' | 'resources' | 'processes' | 'inventory' | 'labor' | 'utilities' | 'comparison' | 'data'
 
 const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[] = [
   { id: 'dashboard', label: 'ダッシュボード', caption: '主要KPI', icon: 'dashboard' },
@@ -14,6 +15,7 @@ const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[
   { id: 'menus', label: 'メニュー', caption: '価格・構成比', icon: 'menu' },
   { id: 'resources', label: '原材料', caption: '仕入・歩留まり', icon: 'box' },
   { id: 'processes', label: '仕込み / レシピ', caption: 'Input → Output', icon: 'recipe' },
+  { id: 'inventory', label: '在庫・仕入', caption: 'FIFO・購入支出', icon: 'box' },
   { id: 'labor', label: '人件費', caption: '役割・実作業', icon: 'labor' },
   { id: 'utilities', label: '光熱費・設備', caption: '水道・ガス・電気・油', icon: 'utility' },
   { id: 'comparison', label: '内製 vs 既製品', caption: 'ROI・シナリオ', icon: 'compare' },
@@ -69,6 +71,7 @@ export default function App() {
       case 'menus': return <MenuEditor {...common} />
       case 'resources': return <ResourcesEditor {...common} />
       case 'processes': return <ProcessesEditor {...common} />
+      case 'inventory': return <InventoryEditor {...common} />
       case 'labor': return <LaborEditor {...common} />
       case 'utilities': return <UtilitiesEditor {...common} />
       case 'comparison': return <ComparisonEditor {...common} />
@@ -100,7 +103,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps Phase 2</span><span>計算結果は意思決定の参考値です。実際の仕入・請求・勤務実績と照合してください。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 3</span><span>簡易現金収支は正式な会計CFではありません。実際の仕入・請求・勤務実績と照合してください。</span></footer>
     </div>
   </div>
 }

@@ -161,7 +161,7 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
   const visible = filter === 'all' ? settings.resources : settings.resources.filter((item) => item.category === filter)
 
   return <>
-    <PageTitle eyebrow="RESOURCES" title="原材料・既製品" description="仕入単位、価格、歩留まり、最低ロットを管理します。表示単価は利用可能量を基準にしています。" actions={<Button variant="primary" onClick={() => onChange({ ...settings, resources: [...settings.resources, {
+    <PageTitle eyebrow="RESOURCES" title="原材料・既製品" description="購入パッケージ量・価格、歩留まり、最低購入パッケージ数を管理します。表示単価は利用可能量を基準にしています。" actions={<Button variant="primary" onClick={() => onChange({ ...settings, resources: [...settings.resources, {
       id: uniqueId('resource'), name: '新しい原材料', category: 'other', purchaseQuantity: 1, purchaseUnit: '個', purchasePrice: 0, yieldRate: 1, usableQuantity: 1,
       storageType: 'refrigerated', shelfLifeDays: 7, minimumPurchaseLot: 1, isReferencePrice: false,
     }] })}>＋ 原材料を追加</Button>} />
@@ -171,7 +171,7 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
     </div>
     <Panel className="table-panel">
       <div className="resource-table-wrap"><table className="resource-table">
-        <thead><tr><th>原材料</th><th>分類</th><th>仕入量</th><th>仕入価格</th><th>歩留まり</th><th>実質単価</th><th>保存</th><th>最低ロット</th><th /></tr></thead>
+        <thead><tr><th>原材料</th><th>分類</th><th>購入package</th><th>package価格</th><th>歩留まり</th><th>使用単価</th><th>保存</th><th>最低購入数</th><th /></tr></thead>
         <tbody>{visible.map((resource) => <tr key={resource.id}>
           <td><input className="table-name-input" value={resource.name} onChange={(event) => updateResource(resource.id, { name: event.target.value })}/>{resource.isReferencePrice && <small className="reference-note">初期参考値</small>}</td>
           <td><select value={resource.category} onChange={(event) => updateResource(resource.id, { category: event.target.value as ResourceCategory })}>{Object.entries(categoryNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></td>
@@ -180,12 +180,12 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
           <td><div className="table-input-group"><input type="number" step="1" min="1" max="100" value={resource.yieldRate * 100} onChange={(event) => updateResource(resource.id, { yieldRate: numberValue(event.target.value) / 100 })}/><span>%</span></div></td>
           <td><strong>{formatUnitPrice(getResourceUnitCost(settings, resource.id))}</strong><small> / {resource.purchaseUnit}</small></td>
           <td><select value={resource.storageType} onChange={(event) => updateResource(resource.id, { storageType: event.target.value as Resource['storageType'] })}>{Object.entries(storageNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><span className="table-input-group shelf-life"><input aria-label="保存日数" type="number" min="0" value={resource.shelfLifeDays} onChange={(event) => updateResource(resource.id, { shelfLifeDays: numberValue(event.target.value) })}/><span>日</span></span></td>
-          <td><div className="table-input-group narrow"><input type="number" step="1" min="1" value={resource.minimumPurchaseLot} onChange={(event) => updateResource(resource.id, { minimumPurchaseLot: numberValue(event.target.value) })}/><span>口</span></div></td>
+          <td><div className="table-input-group narrow"><input type="number" step="1" min="1" value={resource.minimumPurchaseLot} onChange={(event) => updateResource(resource.id, { minimumPurchaseLot: numberValue(event.target.value) })}/><span>個</span></div></td>
           <td><button className="icon-button danger" title="削除" onClick={() => onChange({ ...settings, resources: settings.resources.filter((item) => item.id !== resource.id) })}>×</button></td>
         </tr>)}</tbody>
       </table></div>
     </Panel>
-    <div className="calculation-note"><Icon name="info" size={17}/><span>実質単価 = 仕入価格 ÷（仕入量 × 歩留まり）。使用原価と最低仕入ロットによる購入支出はデータ上分離しています。</span></div>
+    <div className="calculation-note"><Icon name="info" size={17}/><span>使用単価 = package価格 ÷（package量 × 歩留まり）。在庫不足時はpackage単位かつ最低購入数以上で仕入れ、購入日に支出を記録します。</span></div>
   </>
 }
 
@@ -335,8 +335,11 @@ export const UtilitiesEditor = ({ settings, onChange }: EditorProps) => {
     <UtilitySection title="水道" unit="L" config={settings.utilities.water} dailyQuantity={calculateUtilityQuantity(settings.utilities.water, meals, hours)} onChange={(config) => updateUtility('water', config)}/>
     <UtilitySection title="ガス" unit="m³" config={settings.utilities.gas} dailyQuantity={calculateUtilityQuantity(settings.utilities.gas, meals, hours)} onChange={(config) => updateUtility('gas', config)}/>
     <UtilitySection title="電気" unit="kWh" config={settings.utilities.electricity} dailyQuantity={calculateUtilityQuantity(settings.utilities.electricity, meals, hours)} onChange={(config) => updateUtility('electricity', config)}/>
-    <Panel title="揚げ油" caption={`平均日次消費量 ${formatNumber(oilLiters, 2)} L。初期投入を交換周期で按分し、補充・吸油を加算します。`} actions={settings.fryingOil.isReferencePrice ? <Badge tone="reference">初期参考値</Badge> : undefined}>
+    <Panel title="揚げ油" caption={`平均日次消費量 ${formatNumber(oilLiters, 2)} L。Inventory Resourceを選ぶとpackage購入・FIFO在庫で計算します。`} actions={settings.fryingOil.isReferencePrice ? <Badge tone="reference">初期参考値</Badge> : undefined}>
       <div className="form-grid form-grid-3">
+        <SelectField label="在庫Resource" value={settings.fryingOil.inventoryResourceId ?? ''} onChange={(event) => onChange({ ...settings, fryingOil: { ...settings.fryingOil, inventoryResourceId: event.target.value || undefined } })}>
+          <option value="">在庫連携なし（従来計算）</option>{settings.resources.filter((resource) => resource.category === 'oil').map((resource) => <option key={resource.id} value={resource.id}>{resource.name} · {resource.purchaseQuantity}{resource.purchaseUnit}</option>)}
+        </SelectField>
         <NumberField label="油単価" suffix="円 / L" min={0} value={settings.fryingOil.unitPricePerL} onChange={(event) => onChange({ ...settings, fryingOil: { ...settings.fryingOil, unitPricePerL: numberValue(event.target.value), isReferencePrice: false } })}/>
         <NumberField label="初期投入量" suffix="L" min={0} value={settings.fryingOil.initialFillL} onChange={(event) => onChange({ ...settings, fryingOil: { ...settings.fryingOil, initialFillL: numberValue(event.target.value) } })}/>
         <NumberField label="営業中補充量" suffix="L / 日" min={0} value={settings.fryingOil.dailyTopUpL} onChange={(event) => onChange({ ...settings, fryingOil: { ...settings.fryingOil, dailyTopUpL: numberValue(event.target.value) } })}/>
@@ -396,7 +399,7 @@ export const ComparisonEditor = ({ settings, onChange }: EditorProps) => {
       <div className="roi-display"><span>{laborCostMode === 'accounting' ? '会計上' : '意思決定'} 内製ROI</span><strong>{formatYen(result.savingsPerWorkHour)}</strong><small>削減額 / 作業1時間</small></div>
       <div className="saving-display"><span>内製による月間削減額</span><strong className={result.monthlySavings >= 0 ? 'positive' : 'negative'}>{formatYen(result.monthlySavings)}</strong><small>追加作業 {formatNumber(result.monthlyAdditionalHours)} 時間 / 月</small></div>
     </div>
-    <div className="labor-comparison-note"><span>内製作業配賦額 <b>{formatUnitPrice(result.homemadeLaborAllocation)} / 単位</b></span><span>限界人件費 <b>{formatUnitPrice(result.homemadeMarginalLabor)} / 単位</b></span><p>{laborCostMode === 'accounting' ? '勤務時間内の作業は総人件費へ再加算せず、追加勤務だけを含めています。' : '作業配賦額へ担当役割の限界人件費率を適用しています。'}</p></div>
+    <div className="labor-comparison-note"><span>内製作業配賦額 <b>{formatUnitPrice(result.homemadeLaborAllocation)} / 単位</b></span><span>限界人件費 <b>{formatUnitPrice(result.homemadeMarginalLabor)} / 単位</b></span><span>期間廃棄 <b>内製 {formatYen(result.homemadeWasteCost)} / 混合 {formatYen(result.blendedWasteCost)} / 既製 {formatYen(result.purchasedWasteCost)}</b></span><p>{laborCostMode === 'accounting' ? '勤務時間内の作業は総人件費へ再加算せず、追加勤務だけを含めています。' : '作業配賦額へ担当役割の限界人件費率を適用しています。'}</p></div>
     <div className="comparison-grid">
       <ComparisonColumn title="内製" subtitle="MAKE" unitCost={result.homemadeUnitCost} monthlyCost={result.homemadeMonthlyCost} tone="make" />
       <ComparisonColumn title="混合" subtitle="BLEND" unitCost={result.blendedUnitCost} monthlyCost={result.blendedMonthlyCost} tone="blend" />
@@ -421,7 +424,7 @@ export const ComparisonEditor = ({ settings, onChange }: EditorProps) => {
     </div>
     <div className="comparison-callout">
       <div><span>販売量による内製損益分岐</span><strong>{result.breakEvenMealsPerDay ? `${result.breakEvenMealsPerDay}食 / 日 以上` : '500食 / 日でも既製品有利'}</strong></div>
-      <p>日次の必要量に対して仕込みバッチを切り上げ、既製品の使用原価以下になる最初の販売食数を1〜500食で探索しています。</p>
+      <p>月間総費用は日次FIFO・保存期限・仕込みバッチ・購入packageによる廃棄を含みます。損益分岐表示は日次バッチの概算探索です。期末在庫価額は内製 {formatYen(result.homemadeEndingInventoryValue)} / 既製 {formatYen(result.purchasedEndingInventoryValue)} です。</p>
     </div>
 
     <PageTitle eyebrow="SCENARIO" title="営業シナリオ比較" description="現在の店舗設定をAとし、食数・曜日別営業時間・週営業日数を変えたBを同じ30暦日で比較します。" />

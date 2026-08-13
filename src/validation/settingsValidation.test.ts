@@ -52,6 +52,7 @@ describe('settings validation', () => {
     settings.resources[0].purchaseQuantity = 0
     settings.resources[0].purchasePrice = -1
     settings.resources[0].yieldRate = 0
+    settings.resources[0].minimumPurchaseLot = 0
     settings.menuItems[0].sellingPrice = -1
     settings.menuItems[0].expectedSalesRatio = 90
     settings.business.weekdays[0].closingTime = settings.business.weekdays[0].openingTime
@@ -64,8 +65,9 @@ describe('settings validation', () => {
 
     const codes = new Set(validateSettings(settings).map((validationIssue) => validationIssue.code))
     expect([...codes]).toEqual(expect.arrayContaining([
-      'invalid-purchase-quantity',
-      'negative-purchase-price',
+      'invalid-purchase-package-quantity',
+      'negative-purchase-package-price',
+      'invalid-minimum-purchase-packages',
       'invalid-yield-rate',
       'negative-selling-price',
       'invalid-business-hours',
@@ -73,6 +75,21 @@ describe('settings validation', () => {
       'invalid-output-quantity',
       'invalid-cost-allocation',
       'menu-ratio-total',
+    ]))
+  })
+
+  it('期首Inventory Lotの負数・不存在参照・単位不整合・取得日を検証する', () => {
+    const settings = createBenchmarkStore()
+    settings.inventory.openingLots = [
+      { id: 'negative', sourceType: 'resource', sourceId: 'benchmark-noodle', quantity: -1, unit: 'L', acquiredDate: '' },
+      { id: 'missing', sourceType: 'resource', sourceId: 'missing-resource', quantity: 1, unit: 'g', acquiredDate: '2026-01-01' },
+    ]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'negative-inventory',
+      'inventory-unit-mismatch',
+      'opening-inventory-missing-date',
+      'missing-inventory-source',
     ]))
   })
 })

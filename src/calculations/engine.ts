@@ -15,6 +15,7 @@ import type {
   UtilityConfig,
 } from '../models/types'
 import { calculateCalendarSummary } from './calendar'
+import { simulateInventoryPeriod, simulateInventorySourcePlan } from './inventoryEngine'
 import { tryConvertQuantity } from './units'
 
 const emptyCosts = (): CostBreakdown => ({
@@ -414,20 +415,6 @@ export const periodOperatingDays = (settings: AppSettings, period: PeriodKey) =>
 export const periodCalendarMonths = (settings: AppSettings, period: PeriodKey) =>
   calculateCalendarSummary(settings, period).calendarMonths
 
-const scaleResourceDetails = (resources: Map<string, ResourceCalculationDetail>, multiplier: number) =>
-  [...resources.values()].map((detail) => ({ ...detail, quantity: detail.quantity * multiplier, usageCost: detail.usageCost * multiplier }))
-
-const scaleProcessDetails = (processes: Map<string, ProcessCalculationDetail>, multiplier: number) =>
-  [...processes.values()].map((detail) => ({
-    ...detail,
-    batches: detail.batches * multiplier,
-    materialCost: detail.materialCost * multiplier,
-    activeLaborMinutes: detail.activeLaborMinutes * multiplier,
-    laborAllocation: detail.laborAllocation * multiplier,
-    additionalLaborCost: detail.additionalLaborCost * multiplier,
-    marginalLaborCost: detail.marginalLaborCost * multiplier,
-  }))
-
 const calculateShiftLabor = (settings: AppSettings, operatingHours: number) => {
   if (operatingHours <= 0) return 0
   const baseHours = settings.business.hoursPerDay > 0 ? settings.business.hoursPerDay : 1
@@ -439,7 +426,8 @@ const calculateShiftLabor = (settings: AppSettings, operatingHours: number) => {
 export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay = settings.business.mealsPerDay): SimulationResult => {
   const calendar = calculateCalendarSummary(settings, period)
   const core = calculateOperatingCore(settings, mealsPerDay, 'accounting')
-  const costs = scaleCosts(core.costs, calendar.operatingDays)
+  const inventoryEngine = simulateInventoryPeriod(settings, period, mealsPerDay)
+  const costs = { ...inventoryEngine.costs }
   const meals = mealsPerDay * calendar.operatingDays
   const revenue = core.revenue * calendar.operatingDays
 
@@ -454,7 +442,8 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
   costs.electricity += electricityQuantity * settings.utilities.electricity.unitPrice
 
   const oilLiters = calculateAverageDailyOilLiters(settings, mealsPerDay) * calendar.operatingDays
-  costs.fryingOil += oilLiters * settings.fryingOil.unitPricePerL
+  const inventoryManagedOil = !!settings.fryingOil.inventoryResourceId
+  if (!inventoryManagedOil) costs.fryingOil += oilLiters * settings.fryingOil.unitPricePerL
 
   for (const item of settings.otherCosts) {
     if (item.behavior === 'perMeal') costs.other += item.amount * meals
@@ -469,9 +458,9 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
     + settings.utilities.electricity.fixedChargePerMonth
   ) * calendar.calendarMonths
 
-  const prepLaborAllocation = core.trace.labor.prepLaborAllocation * calendar.operatingDays
-  const additionalPrepLaborCost = core.trace.labor.additionalPrepLaborCost * calendar.operatingDays
-  const marginalPrepLaborCost = core.trace.labor.marginalPrepLaborCost * calendar.operatingDays
+  const prepLaborAllocation = inventoryEngine.labor.prepLaborAllocation
+  const additionalPrepLaborCost = inventoryEngine.labor.additionalPrepLaborCost
+  const marginalPrepLaborCost = inventoryEngine.labor.marginalPrepLaborCost
   const labor: LaborBreakdown = {
     shiftLaborCost,
     prepLaborAllocation,
@@ -480,7 +469,7 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
     marginalPrepLaborCost,
   }
 
-  const resourceDetails = scaleResourceDetails(core.trace.resources, calendar.operatingDays)
+  const resourceDetails = inventoryEngine.resources
   const processOilLiters = resourceDetails.reduce((total, detail) => {
     const resource = settings.resources.find((item) => item.id === detail.id)
     if (resource?.category !== 'oil') return total
@@ -491,6 +480,23 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
   const foodCost = costs.directIngredients + costs.prepMaterials + costs.fryingOil + costs.waste
   const grossProfit = revenue - foodCost
   const operatingProfit = revenue - totalCost
+  const operationalOilCost = inventoryManagedOil ? 0 : oilLiters * settings.fryingOil.unitPricePerL
+  const globalUtilityCash = waterQuantity * settings.utilities.water.unitPrice
+    + gasQuantity * settings.utilities.gas.unitPrice
+    + electricityQuantity * settings.utilities.electricity.unitPrice
+  const processUtilityCash = inventoryEngine.processCashUtilities.water
+    + inventoryEngine.processCashUtilities.gas
+    + inventoryEngine.processCashUtilities.electricity
+  const simpleCashFlow = revenue
+    - inventoryEngine.inventory.purchaseExpenditure
+    - shiftLaborCost
+    - inventoryEngine.processCashAdditionalLabor
+    - globalUtilityCash
+    - processUtilityCash
+    - operationalOilCost
+    - costs.other
+    - costs.fixedMonthly
+  const inventory = { ...inventoryEngine.inventory, simpleCashFlow }
 
   let marginalCostPerMeal = 0
   if (calendar.operatingDays > 0) {
@@ -500,20 +506,23 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
       + settings.utilities.gas.uses.reduce((sum, use) => sum + (use.behavior === 'perMeal' ? use.quantity : use.behavior === 'perUse' ? use.quantity * (use.usesPerMeal ?? 0) : 0), 0) * settings.utilities.gas.unitPrice
       + settings.utilities.electricity.uses.reduce((sum, use) => sum + (use.behavior === 'perMeal' ? use.quantity : use.behavior === 'perUse' ? use.quantity * (use.usesPerMeal ?? 0) : 0), 0) * settings.utilities.electricity.unitPrice
     const otherDifference = settings.otherCosts.filter((item) => item.behavior === 'perMeal').reduce((sum, item) => sum + item.amount, 0)
-    marginalCostPerMeal = Math.max(0, coreDifference + utilityDifference + settings.fryingOil.absorptionLPerMeal * settings.fryingOil.unitPricePerL + otherDifference)
+    const oilUnitPrice = inventoryManagedOil && settings.fryingOil.inventoryResourceId
+      ? getResourceCostForQuantity(settings, settings.fryingOil.inventoryResourceId, 1, 'L')
+      : settings.fryingOil.unitPricePerL
+    marginalCostPerMeal = Math.max(0, coreDifference + utilityDifference + settings.fryingOil.absorptionLPerMeal * oilUnitPrice + otherDifference)
   }
 
   const details: CalculationDetails = {
     meals,
     menus: core.menus.map((menu) => ({ ...menu, servings: menu.servings * calendar.operatingDays, revenue: menu.revenue * calendar.operatingDays })),
     resources: resourceDetails,
-    processes: scaleProcessDetails(core.trace.processes, calendar.operatingDays),
+    processes: inventoryEngine.processes,
     utilities: {
-      water: { quantity: waterQuantity + core.trace.waterL * calendar.operatingDays, unit: 'L', usageCost: costs.water },
-      gas: { quantity: gasQuantity + core.trace.gasM3 * calendar.operatingDays, unit: 'm³', usageCost: costs.gas },
-      electricity: { quantity: electricityQuantity + core.trace.electricityKWh * calendar.operatingDays, unit: 'kWh', usageCost: costs.electricity },
+      water: { quantity: waterQuantity + inventoryEngine.processes.reduce((sum, detail) => sum + (settings.processes.find((process) => process.id === detail.id)?.waterUsageL ?? 0) * detail.batches, 0), unit: 'L', usageCost: costs.water },
+      gas: { quantity: gasQuantity + inventoryEngine.processes.reduce((sum, detail) => sum + (settings.processes.find((process) => process.id === detail.id)?.gasUsageM3 ?? 0) * detail.batches, 0), unit: 'm³', usageCost: costs.gas },
+      electricity: { quantity: electricityQuantity + inventoryEngine.processes.reduce((sum, detail) => sum + (settings.processes.find((process) => process.id === detail.id)?.electricUsageKWh ?? 0) * detail.batches, 0), unit: 'kWh', usageCost: costs.electricity },
     },
-    fryingOilLiters: oilLiters + processOilLiters,
+    fryingOilLiters: inventoryManagedOil ? processOilLiters : oilLiters + processOilLiters,
     fryingOilCost: costs.fryingOil,
   }
 
@@ -542,6 +551,7 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
     menuRatioTotal: core.ratioTotal,
     labor,
     details,
+    inventory,
   }
 }
 
@@ -565,16 +575,16 @@ export const compareMakeBuy = (settings: AppSettings, laborCostMode: LaborCostMo
   const blendedUnitCost = sumCosts(blended.costs)
   const operatingDays = periodOperatingDays(settings, 'month')
   const monthlyUsage = comparison.dailyUsage * operatingDays
-  const monthlyHomemadeQuantity = outputQuantityInUnit(settings, comparison.homemadeOutputId, monthlyUsage, comparison.unit) ?? 0
-  const homemadeMonthly = calculateOutputWithTrace(settings, comparison.homemadeOutputId, monthlyHomemadeQuantity, true, laborCostMode)
-  const homemadeMonthlyCost = sumCosts(homemadeMonthly.costs)
-  const purchasedMonthlyCost = getResourceCostForQuantity(settings, comparison.purchasedResourceId, monthlyUsage, comparison.unit)
-  const blendMonthlyQuantity = blendOutput ? tryConvertQuantity(monthlyUsage, comparison.unit, blendOutput.unit) ?? 0 : 0
-  const blendedMonthlyCost = blendOutput
-    ? sumCosts(calculateProcessOutputCost(settings, blendOutput.id, blendMonthlyQuantity, true, laborCostMode))
-    : 0
+  const homemadePlan = simulateInventorySourcePlan(settings, { sourceType: 'output', sourceId: comparison.homemadeOutputId, quantity: comparison.dailyUsage, unit: comparison.unit }, comparison.dailyUsage, laborCostMode)
+  const purchasedPlan = simulateInventorySourcePlan(settings, { sourceType: 'resource', sourceId: comparison.purchasedResourceId, quantity: comparison.dailyUsage, unit: comparison.unit }, comparison.dailyUsage, laborCostMode)
+  const blendedPlan = blendOutput
+    ? simulateInventorySourcePlan(settings, { sourceType: 'output', sourceId: blendOutput.id, quantity: comparison.dailyUsage, unit: comparison.unit }, comparison.dailyUsage, laborCostMode)
+    : { totalPeriodCost: 0, usageCost: 0, wasteCost: 0, endingInventoryValue: 0, purchaseExpenditure: 0, workHours: 0 }
+  const homemadeMonthlyCost = homemadePlan.totalPeriodCost
+  const purchasedMonthlyCost = purchasedPlan.totalPeriodCost
+  const blendedMonthlyCost = blendedPlan.totalPeriodCost
   const monthlySavings = purchasedMonthlyCost - homemadeMonthlyCost
-  const monthlyAdditionalHours = [...homemadeMonthly.trace.processes.values()].reduce((total, process) => total + process.activeLaborMinutes, 0) / 60
+  const monthlyAdditionalHours = homemadePlan.workHours
   const usagePerMeal = comparison.dailyUsage / Math.max(1, settings.business.mealsPerDay)
   let breakEvenMealsPerDay: number | null = null
 
@@ -612,6 +622,11 @@ export const compareMakeBuy = (settings: AppSettings, laborCostMode: LaborCostMo
     breakEvenMealsPerDay,
     homemadeLaborAllocation: homemade.trace.labor.prepLaborAllocation,
     homemadeMarginalLabor: homemade.trace.labor.marginalPrepLaborCost,
+    homemadeWasteCost: homemadePlan.wasteCost,
+    purchasedWasteCost: purchasedPlan.wasteCost,
+    blendedWasteCost: blendedPlan.wasteCost,
+    homemadeEndingInventoryValue: homemadePlan.endingInventoryValue,
+    purchasedEndingInventoryValue: purchasedPlan.endingInventoryValue,
   }
 }
 
