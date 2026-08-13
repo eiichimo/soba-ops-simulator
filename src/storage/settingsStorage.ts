@@ -1,9 +1,9 @@
 import { createSampleSettings } from '../data/sampleData'
 import { todayLocalDate } from '../calculations/calendar'
-import type { AppSettings, Process } from '../models/types'
+import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 2
+export const CURRENT_SCHEMA_VERSION = 3
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -31,9 +31,38 @@ export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
   } as Process)),
 })
 
+export const migrateV2ToV3 = (settings: AppSettings): AppSettings => {
+  const legacyEntries = settings.inventory?.entries ?? []
+  const openingLots: OpeningInventoryLot[] = settings.inventory?.openingLots ?? legacyEntries
+    .filter((entry) => entry.carryOverQuantity > 0)
+    .map((entry) => ({
+      id: `migrated-${entry.id}`,
+      sourceType: entry.sourceType,
+      sourceId: entry.sourceId,
+      quantity: entry.carryOverQuantity,
+      unit: entry.unit,
+      acquiredDate: settings.business.simulationStartDate,
+    }))
+  return {
+    ...settings,
+    schemaVersion: 3,
+    resources: settings.resources.map((resource) => ({
+      ...resource,
+      minimumPurchaseLot: resource.minimumPurchaseLot > 0 ? resource.minimumPurchaseLot : 1,
+    })),
+    inventory: {
+      carryOverEnabled: true,
+      entries: legacyEntries,
+      openingLots,
+    },
+  }
+}
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
-  if (settings.schemaVersion === 1) return migrateV1ToV2(settings)
-  return settings
+  let migrated = settings
+  if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
+  if (migrated.schemaVersion === 2) migrated = migrateV2ToV3(migrated)
+  return migrated
 }
 
 export const parseSettingsJson = (json: string): AppSettings => {

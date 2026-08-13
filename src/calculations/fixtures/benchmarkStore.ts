@@ -1,7 +1,7 @@
 import type { AppSettings } from '../../models/types'
 
 export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSettings => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   business: {
     storeName: '検算用基準店舗',
     mealsPerDay: 100,
@@ -27,7 +27,7 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
     yieldRate: 1,
     usableQuantity: 10,
     storageType: 'refrigerated',
-    shelfLifeDays: 3,
+    shelfLifeDays: 365,
     minimumPurchaseLot: 1,
     isReferencePrice: false,
   }],
@@ -88,7 +88,8 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
     unit: 'kg',
   },
   inventory: {
-    carryOverEnabled: false,
+    carryOverEnabled: true,
     entries: [],
+    openingLots: [],
   },
 })

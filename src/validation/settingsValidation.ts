@@ -31,9 +31,10 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   for (const [index, resource] of settings.resources.entries()) {
     const path = `resources.${index}`
     if (resource.yieldRate <= 0 || resource.yieldRate > 1) issues.push(issue('error', 'invalid-yield-rate', `${resource.name}の歩留まりは0%超100%以下にしてください。`, path))
-    if (resource.purchaseQuantity <= 0) issues.push(issue('error', 'invalid-purchase-quantity', `${resource.name}の仕入量は0より大きくしてください。`, path))
-    if (resource.purchasePrice < 0) issues.push(issue('error', 'negative-purchase-price', `${resource.name}の仕入価格は0円以上にしてください。`, path))
-    if (resource.shelfLifeDays <= 0) issues.push(issue('warning', 'zero-shelf-life', `${resource.name}の保存期限が0日です。`, path))
+    if (resource.purchaseQuantity <= 0) issues.push(issue('error', 'invalid-purchase-package-quantity', `${resource.name}の購入パッケージ量は0より大きくしてください。`, path))
+    if (resource.purchasePrice < 0) issues.push(issue('error', 'negative-purchase-package-price', `${resource.name}の購入パッケージ価格は0円以上にしてください。`, path))
+    if (resource.minimumPurchaseLot <= 0) issues.push(issue('error', 'invalid-minimum-purchase-packages', `${resource.name}の最低購入パッケージ数は1以上にしてください。`, path))
+    if (resource.shelfLifeDays <= 0) issues.push(issue('warning', 'missing-shelf-life', `${resource.name}の保存期限が未設定です。`, path))
   }
 
   for (const [index, process] of settings.processes.entries()) {
@@ -54,6 +55,9 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (process.outputs.length > 0 && Math.abs(allocationTotal - 1) > 0.0001) {
       issues.push(issue('warning', 'cost-allocation-total', `${process.name}の原価配賦率合計は${(allocationTotal * 100).toFixed(1)}%です。`, path))
     }
+    if (process.outputs[0] && Math.abs(process.outputs[0].quantity - process.batchSize) > 0.0001) {
+      issues.push(issue('warning', 'primary-output-batch-mismatch', `${process.name}の主Output数量とbatchSizeが一致していません。在庫生産ではbatchSizeを使用します。`, path))
+    }
   }
 
   for (const [index, menu] of settings.menuItems.entries()) {
@@ -63,6 +67,22 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   for (const [index, topping] of settings.toppings.entries()) {
     if (topping.sellingPrice < 0) issues.push(issue('error', 'negative-selling-price', `${topping.name}の販売価格は0円以上にしてください。`, `toppings.${index}`))
     topping.consumption.forEach((source, sourceIndex) => validateSource(source, `toppings.${index}.consumption.${sourceIndex}`))
+  }
+
+  for (const [index, lot] of settings.inventory.openingLots.entries()) {
+    const path = `inventory.openingLots.${index}`
+    if (lot.quantity < 0) issues.push(issue('error', 'negative-inventory', `期首在庫「${lot.id}」の数量は0以上にしてください。`, path))
+    const targetUnit = lot.sourceType === 'resource'
+      ? resources.get(lot.sourceId)?.purchaseUnit
+      : outputs.get(lot.sourceId)?.unit
+    if (!targetUnit) issues.push(issue('error', 'missing-inventory-source', `期首在庫の参照先「${lot.sourceId}」が見つかりません。`, path))
+    else if (!areUnitsCompatible(lot.unit, targetUnit)) issues.push(issue('error', 'inventory-unit-mismatch', `期首在庫の単位${lot.unit}は${targetUnit}と換算できません。`, path))
+    if (!lot.acquiredDate || !parseLocalDate(lot.acquiredDate)) issues.push(issue('warning', 'opening-inventory-missing-date', `期首在庫「${lot.id}」の取得日がありません。`, path))
+  }
+  if (settings.fryingOil.inventoryResourceId) {
+    const oilResource = resources.get(settings.fryingOil.inventoryResourceId)
+    if (!oilResource) issues.push(issue('error', 'missing-frying-oil-resource', '揚げ油の在庫Resourceが見つかりません。', 'fryingOil.inventoryResourceId'))
+    else if (!areUnitsCompatible(oilResource.purchaseUnit, 'L')) issues.push(issue('error', 'frying-oil-unit-mismatch', `揚げ油Resourceの単位${oilResource.purchaseUnit}はLと換算できません。`, 'fryingOil.inventoryResourceId'))
   }
 
   const menuRatio = settings.menuItems.filter((menu) => menu.enabled).reduce((total, menu) => total + menu.expectedSalesRatio, 0)

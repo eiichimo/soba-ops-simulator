@@ -158,10 +158,32 @@ describe('SobaOps calculation engine', () => {
     settings.business.simulationStartDate = '2026-01-05'
     const result = compareMakeBuy(settings)
     expect(result.monthlyUsage).toBe(settings.makeBuyComparison.dailyUsage * periodOperatingDays(settings, 'month'))
-    expect(result.homemadeMonthlyCost).toBeCloseTo(sumCosts(calculateProcessOutputCost(settings, settings.makeBuyComparison.homemadeOutputId, result.monthlyUsage, true)))
     expect(result.purchasedMonthlyCost).toBeCloseTo(result.purchasedUnitCost * result.monthlyUsage)
     expect(result.monthlySavings).toBeCloseTo(result.purchasedMonthlyCost - result.homemadeMonthlyCost)
+    expect(result.homemadeMonthlyCost).toBeGreaterThan(0)
+    expect(result.homemadeWasteCost).toBeGreaterThanOrEqual(0)
+    expect(result.homemadeEndingInventoryValue).toBeGreaterThanOrEqual(0)
     expect(Number.isFinite(result.savingsPerWorkHour)).toBe(true)
+  })
+
+  it('内製比較へ日次バッチと保存期限による廃棄を反映する', () => {
+    const settings = createBenchmarkStore('2026-01-05')
+    settings.resources = [
+      { ...settings.resources[0], id: 'make-input', name: '内製材料', category: 'other', purchaseQuantity: 1, purchaseUnit: '食', purchasePrice: 20, usableQuantity: 1, shelfLifeDays: 365 },
+      { ...settings.resources[0], id: 'buy-item', name: '既製品', category: 'prepared', purchaseQuantity: 100, purchaseUnit: '食', purchasePrice: 3_000, usableQuantity: 100, shelfLifeDays: 30 },
+    ]
+    settings.processes = [{
+      id: 'make-process', name: '50個内製',
+      inputs: [{ sourceType: 'resource', sourceId: 'make-input', quantity: 50, unit: '食' }],
+      outputs: [{ id: 'make-output', name: '内製品', quantity: 50, unit: '食', costAllocation: 1, storageType: 'refrigerated', shelfLifeDays: 1 }],
+      batchSize: 50, processDurationMinutes: 10, activeLaborMinutes: 0, laborRole: 'benchmark-staff', laborCostTreatment: 'withinScheduledShift',
+      gasUsageM3: 0, electricUsageKWh: 0, waterUsageL: 0, wasteRate: 0, wasteReason: 'cookingLoss',
+    }]
+    settings.makeBuyComparison = { name: '比較品', homemadeOutputId: 'make-output', purchasedResourceId: 'buy-item', blendProcessId: '', dailyUsage: 10, unit: '食' }
+    const result = compareMakeBuy(settings)
+    expect(result.homemadeWasteCost).toBeGreaterThan(0)
+    expect(result.purchasedWasteCost).toBe(0)
+    expect(result.homemadeMonthlyCost).toBeGreaterThan(result.homemadeUnitCost * result.monthlyUsage)
   })
 
   it('工程需要をバッチ単位へ切り上げて原価へ反映する', () => {
