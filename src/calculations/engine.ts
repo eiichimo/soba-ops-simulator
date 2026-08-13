@@ -1,6 +1,7 @@
 import type {
   AppSettings,
   CalculationDetails,
+  CalendarSummary,
   CostBreakdown,
   LaborBreakdown,
   LaborCostMode,
@@ -14,7 +15,7 @@ import type {
   Unit,
   UtilityConfig,
 } from '../models/types'
-import { calculateCalendarSummary } from './calendar'
+import { calculateCalendarRange, calculateCalendarSummary, parseLocalDate } from './calendar'
 import { simulateInventoryPeriod, simulateInventorySourcePlan } from './inventoryEngine'
 import { tryConvertQuantity } from './units'
 
@@ -423,10 +424,14 @@ const calculateShiftLabor = (settings: AppSettings, operatingHours: number) => {
   ), 0)
 }
 
-export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay = settings.business.mealsPerDay): SimulationResult => {
-  const calendar = calculateCalendarSummary(settings, period)
+const simulateWithCalendar = (
+  settings: AppSettings,
+  calendar: CalendarSummary,
+  period: SimulationResult['period'],
+  mealsPerDay: number,
+): SimulationResult => {
   const core = calculateOperatingCore(settings, mealsPerDay, 'accounting')
-  const inventoryEngine = simulateInventoryPeriod(settings, period, mealsPerDay)
+  const inventoryEngine = simulateInventoryPeriod(settings, period === 'custom' ? 'month' : period, mealsPerDay, 'accounting', calendar)
   const costs = { ...inventoryEngine.costs }
   const meals = mealsPerDay * calendar.operatingDays
   const revenue = core.revenue * calendar.operatingDays
@@ -553,6 +558,23 @@ export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay =
     details,
     inventory,
   }
+}
+
+export const simulate = (settings: AppSettings, period: PeriodKey, mealsPerDay = settings.business.mealsPerDay): SimulationResult => (
+  simulateWithCalendar(settings, calculateCalendarSummary(settings, period), period, mealsPerDay)
+)
+
+export const simulateDateRange = (
+  settings: AppSettings,
+  startDate: string,
+  endDateInclusive: string,
+  mealsPerDay = settings.business.mealsPerDay,
+): SimulationResult | null => {
+  const start = parseLocalDate(startDate)
+  const end = parseLocalDate(endDateInclusive)
+  if (!start || !end || end < start) return null
+  const endExclusive = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1)
+  return simulateWithCalendar(settings, calculateCalendarRange(settings, start, endExclusive), 'custom', mealsPerDay)
 }
 
 const outputQuantityInUnit = (settings: AppSettings, outputId: string, quantity: number, unit: Unit) => {

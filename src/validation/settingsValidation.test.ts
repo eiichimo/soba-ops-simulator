@@ -92,4 +92,25 @@ describe('settings validation', () => {
       'missing-inventory-source',
     ]))
   })
+
+  it('Actual期間・実績値とScenario Overrideを検証する', () => {
+    const settings = createBenchmarkStore()
+    settings.actualPeriods = [{
+      id: 'actual', name: '不正実績', startDate: '2026-02-01', endDate: '2026-01-01',
+      actuals: {
+        revenue: -1, menuSales: [],
+        resourceRecords: [{ resourceId: 'missing', purchasedQuantity: 1, purchaseUnit: '本' }],
+        utilities: { water: {}, gas: {}, electricity: {} },
+      },
+    }]
+    settings.scenarios = [{ id: 'scenario', name: '不正Scenario', overrides: { laborWageMultiplier: -1, business: { operatingDaysPerWeek: 8 } } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'invalid-actual-period',
+      'negative-actual-value',
+      'missing-actual-resource',
+      'negative-scenario-multiplier',
+      'invalid-scenario-operating-days',
+    ]))
+  })
 })

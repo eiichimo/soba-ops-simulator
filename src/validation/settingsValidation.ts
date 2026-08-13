@@ -130,6 +130,66 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   }
   for (const process of settings.processes) visit(process.id)
 
+  for (const [index, actualPeriod] of settings.actualPeriods.entries()) {
+    const path = `actualPeriods.${index}`
+    const start = parseLocalDate(actualPeriod.startDate)
+    const end = parseLocalDate(actualPeriod.endDate)
+    if (!start || !end || end < start) issues.push(issue('error', 'invalid-actual-period', `${actualPeriod.name}の実績期間が正しくありません。`, path))
+    const nonNegativeValues: Array<[string, number | undefined]> = [
+      ['売上', actualPeriod.actuals.revenue], ['販売食数', actualPeriod.actuals.meals], ['使用原価', actualPeriod.actuals.usageCost],
+      ['購入支出', actualPeriod.actuals.purchaseExpenditure], ['期首在庫価額', actualPeriod.actuals.openingInventoryValue], ['期末在庫価額', actualPeriod.actuals.endingInventoryValue],
+      ['廃棄原価', actualPeriod.actuals.wasteCost], ['人件費', actualPeriod.actuals.laborCost], ['実労働時間', actualPeriod.actuals.laborHours],
+      ['水道料金', actualPeriod.actuals.utilities.water.cost], ['水使用量', actualPeriod.actuals.utilities.water.quantity],
+      ['ガス料金', actualPeriod.actuals.utilities.gas.cost], ['ガス使用量', actualPeriod.actuals.utilities.gas.quantity],
+      ['電気料金', actualPeriod.actuals.utilities.electricity.cost], ['電力使用量', actualPeriod.actuals.utilities.electricity.quantity],
+      ['その他費用', actualPeriod.actuals.otherCost], ['営業日数', actualPeriod.actuals.operatingDays], ['総営業時間', actualPeriod.actuals.operatingHours],
+    ]
+    for (const [label, value] of nonNegativeValues) {
+      if (value !== undefined && value < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}の${label}は0以上にしてください。`, path))
+    }
+    for (const [recordIndex, record] of actualPeriod.actuals.resourceRecords.entries()) {
+      const recordPath = `${path}.actuals.resourceRecords.${recordIndex}`
+      if ([record.purchasedQuantity, record.purchaseExpenditure, record.usedQuantity, record.wasteQuantity, record.wasteCost].some((value) => value !== undefined && value < 0)) {
+        issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}のResource実績は0以上にしてください。`, recordPath))
+      }
+      const resource = resources.get(record.resourceId)
+      if (!resource) issues.push(issue('error', 'missing-actual-resource', `実績Resource「${record.resourceId}」が見つかりません。`, recordPath))
+      else {
+        if (!areUnitsCompatible(record.purchaseUnit, resource.purchaseUnit)) issues.push(issue('error', 'actual-resource-unit-mismatch', `${resource.name}の実績購入単位${record.purchaseUnit}は${resource.purchaseUnit}と換算できません。`, recordPath))
+        if (record.usageUnit && !areUnitsCompatible(record.usageUnit, resource.purchaseUnit)) issues.push(issue('error', 'actual-resource-unit-mismatch', `${resource.name}の実績使用単位${record.usageUnit}は${resource.purchaseUnit}と換算できません。`, recordPath))
+        if (record.wasteUnit && !areUnitsCompatible(record.wasteUnit, resource.purchaseUnit)) issues.push(issue('error', 'actual-resource-unit-mismatch', `${resource.name}の実績廃棄単位${record.wasteUnit}は${resource.purchaseUnit}と換算できません。`, recordPath))
+      }
+    }
+    for (const [saleIndex, sale] of actualPeriod.actuals.menuSales.entries()) {
+      const salePath = `${path}.actuals.menuSales.${saleIndex}`
+      if (!settings.menuItems.some((menu) => menu.id === sale.menuItemId)) issues.push(issue('error', 'missing-actual-menu', `実績メニュー「${sale.menuItemId}」が見つかりません。`, salePath))
+      if (sale.quantity < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}のメニュー別販売食数は0以上にしてください。`, salePath))
+    }
+  }
+  if (new Set(settings.actualPeriods.map((period) => period.id)).size !== settings.actualPeriods.length) {
+    issues.push(issue('error', 'duplicate-actual-id', '実績期間のIDが重複しています。', 'actualPeriods'))
+  }
+
+  for (const [index, scenario] of settings.scenarios.entries()) {
+    const path = `scenarios.${index}`
+    const multipliers = [
+      scenario.overrides.averageSellingPriceMultiplier,
+      scenario.overrides.laborWageMultiplier,
+      ...Object.values(scenario.overrides.resourcePurchasePriceMultipliers ?? {}),
+      ...Object.values(scenario.overrides.utilityUnitPriceMultipliers ?? {}),
+    ]
+    if (multipliers.some((value) => value !== undefined && value < 0)) issues.push(issue('error', 'negative-scenario-multiplier', `${scenario.name}の変化倍率は0以上にしてください。`, path))
+    if ((scenario.overrides.business?.mealsPerDay ?? 0) < 0 || (scenario.overrides.business?.hoursPerDay ?? 0) < 0) {
+      issues.push(issue('error', 'negative-scenario-business-value', `${scenario.name}の食数・営業時間は0以上にしてください。`, path))
+    }
+    const days = scenario.overrides.business?.operatingDaysPerWeek
+    if (days !== undefined && (days < 0 || days > 7)) issues.push(issue('error', 'invalid-scenario-operating-days', `${scenario.name}の週営業日数は0〜7日にしてください。`, path))
+    for (const resourceId of Object.keys(scenario.overrides.resourcePurchasePriceMultipliers ?? {})) {
+      if (!resources.has(resourceId)) issues.push(issue('error', 'missing-scenario-resource', `${scenario.name}の対象Resource「${resourceId}」が見つかりません。`, path))
+    }
+  }
+  if (settings.scenarios.length > 5) issues.push(issue('warning', 'too-many-scenarios', '比較表示は先頭5件のScenarioまでです。', 'scenarios'))
+
   if (settings.resources.some((resource) => resource.isReferencePrice)
     || settings.utilities.water.isReferencePrice
     || settings.utilities.gas.isReferencePrice

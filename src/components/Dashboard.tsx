@@ -101,6 +101,7 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
   ]
   const validationIssues = [...validateSettings(settings), ...runtimeWarnings]
   const validationErrors = validationIssues.filter((validationIssue) => validationIssue.severity === 'error')
+  const calculationErrors = validationErrors.filter((validationIssue) => !validationIssue.code.includes('actual') && !validationIssue.code.includes('scenario'))
   const validationWarnings = validationIssues.filter((validationIssue) => validationIssue.severity === 'warning')
   const variableFood = result.costs.directIngredients + result.costs.prepMaterials + result.costs.fryingOil + result.costs.waste
 
@@ -113,14 +114,14 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
     />
 
     {validationIssues.length > 0 && <details className={`validation-summary ${validationErrors.length ? 'has-errors' : ''}`} open={validationErrors.length > 0}>
-      <summary><Icon name="info" size={18}/><span>{validationErrors.length > 0 ? `計算設定に${validationErrors.length}件のErrorがあります。結果が不完全な可能性があります。` : `${validationWarnings.length}件のWarningがあります。`}</span><small>Error {validationErrors.length} / Warning {validationWarnings.length}</small></summary>
+      <summary><Icon name="info" size={18}/><span>{validationErrors.length > 0 ? calculationErrors.length > 0 ? `計算設定に${calculationErrors.length}件のErrorがあります。結果が不完全な可能性があります。` : `実績またはScenarioに${validationErrors.length}件のErrorがあります。該当比較を確認してください。` : `${validationWarnings.length}件のWarningがあります。`}</span><small>Error {validationErrors.length} / Warning {validationWarnings.length}</small></summary>
       <div>{validationIssues.map((validationIssue, index) => <p className={validationIssue.severity} key={`${validationIssue.code}-${validationIssue.path}-${index}`}><Badge tone={validationIssue.severity === 'error' ? 'warning' : 'reference'}>{validationIssue.severity.toUpperCase()}</Badge><span>{validationIssue.message}</span></p>)}</div>
     </details>}
 
     <div className="kpi-grid">
       <KpiCard label="売上" value={formatCompactYen(result.revenue)} note={`メニュー ${formatCompactYen(result.menuRevenue)} + 追加 ${formatCompactYen(result.toppingRevenue)}`} />
       <KpiCard label="総コスト" value={formatCompactYen(result.totalCost)} note={`売上比 ${formatPercent(result.revenue ? result.totalCost / result.revenue : 0)}`} />
-      <KpiCard label="営業利益" value={formatCompactYen(result.operatingProfit)} note={`${formatNumber(result.operatingDays, 0)}営業日 · ${formatNumber(result.meals, 0)}食${validationErrors.length ? ' · 要確認' : ''}`} tone="accent" />
+      <KpiCard label="営業利益" value={formatCompactYen(result.operatingProfit)} note={`${formatNumber(result.operatingDays, 0)}営業日 · ${formatNumber(result.meals, 0)}食${calculationErrors.length ? ' · 要確認' : ''}`} tone="accent" />
       <KpiCard label="営業利益率" value={formatPercent(result.operatingMargin)} note={`原価率 ${formatPercent(result.foodCostRate)}`} tone="dark" />
       <KpiCard label="1食平均原価" value={formatYen(result.averageCostPerMeal)} note={`限界原価 ${formatYen(result.marginalCostPerMeal)}`} />
       <KpiCard label="1時間あたり利益" value={formatYen(result.profitPerOperatingHour)} note={`1営業日 ${formatYen(result.profitPerOperatingDay)}`} />

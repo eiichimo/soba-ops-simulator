@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  CalendarSummary,
   CostBreakdown,
   InventoryCostComponents,
   InventoryDailyMovement,
@@ -158,8 +159,9 @@ export const simulateInventoryPeriod = (
   period: PeriodKey,
   mealsPerDay = settings.business.mealsPerDay,
   laborCostMode: LaborCostMode = 'accounting',
+  calendarOverride?: CalendarSummary,
 ): InventoryEngineResult => {
-  const calendar = calculateCalendarSummary(settings, period)
+  const calendar = calendarOverride ?? calculateCalendarSummary(settings, period)
   const startDate = parseLocalDate(calendar.startDate) ?? new Date()
   const endDate = parseLocalDate(calendar.endDateExclusive) ?? addDays(startDate, calendar.calendarDays)
   const costs = emptyCosts()

@@ -1,6 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
 import { calculateAverageDailyOilLiters, calculateProcessOutputCost, calculateUtilityQuantity, compareMakeBuy, getResourceUnitCost, simulate, sumCosts } from '../calculations/engine'
-import { timeToMinutes } from '../calculations/calendar'
 import type {
   AppSettings,
   CostBehavior,
@@ -16,18 +15,12 @@ import type {
   UtilityConfig,
 } from '../models/types'
 import { validateSettings } from '../validation/settingsValidation'
-import { formatCompactYen, formatNumber, formatPercent, formatUnitPrice, formatYen } from '../utils/format'
+import { formatCompactYen, formatNumber, formatUnitPrice, formatYen } from '../utils/format'
 import { Badge, Button, EmptyState, Icon, NumberField, PageTitle, Panel, SelectField, TextField, Toggle } from './ui'
 
 type EditorProps = { settings: AppSettings; onChange: (settings: AppSettings) => void }
 const numberValue = (value: string) => Number.isFinite(Number(value)) ? Number(value) : 0
 const uniqueId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-const closingTimeForHours = (openingTime: string, hours: number) => {
-  const opening = timeToMinutes(openingTime) ?? 0
-  const closing = Math.min(23 * 60 + 59, opening + Math.round(hours * 60))
-  return `${String(Math.floor(closing / 60)).padStart(2, '0')}:${String(closing % 60).padStart(2, '0')}`
-}
-
 const categoryNames: Record<ResourceCategory, string> = {
   noodle: '麺類', produce: '野菜', seasoning: '調味料', seafood: '魚介', topping: '薬味・具材', prepared: '既製品',
   water: '水道', gas: 'ガス', electricity: '電気', oil: '油', other: 'その他',
@@ -373,22 +366,6 @@ const ComparisonColumn = ({ title, subtitle, unitCost, monthlyCost, tone }: { ti
 export const ComparisonEditor = ({ settings, onChange }: EditorProps) => {
   const [laborCostMode, setLaborCostMode] = useState<LaborCostMode>('accounting')
   const result = useMemo(() => compareMakeBuy(settings, laborCostMode), [settings, laborCostMode])
-  const [scenarioB, setScenarioB] = useState({ meals: 110, hours: 10, days: 5 })
-  const scenarioAResult = simulate(settings, 'month')
-  const scenarioBSettings: AppSettings = {
-    ...settings,
-    business: {
-      ...settings.business,
-      mealsPerDay: scenarioB.meals,
-      hoursPerDay: scenarioB.hours,
-      weekdays: settings.business.weekdays.map((schedule, index) => ({
-        ...schedule,
-        enabled: index < scenarioB.days,
-        closingTime: closingTimeForHours(schedule.openingTime, scenarioB.hours),
-      })),
-    },
-  }
-  const scenarioBResult = simulate(scenarioBSettings, 'month')
   const blendIndex = settings.processes.findIndex((item) => item.id === settings.makeBuyComparison.blendProcessId)
   const blend = settings.processes[blendIndex]
 
@@ -427,22 +404,6 @@ export const ComparisonEditor = ({ settings, onChange }: EditorProps) => {
       <p>月間総費用は日次FIFO・保存期限・仕込みバッチ・購入packageによる廃棄を含みます。損益分岐表示は日次バッチの概算探索です。期末在庫価額は内製 {formatYen(result.homemadeEndingInventoryValue)} / 既製 {formatYen(result.purchasedEndingInventoryValue)} です。</p>
     </div>
 
-    <PageTitle eyebrow="SCENARIO" title="営業シナリオ比較" description="現在の店舗設定をAとし、食数・曜日別営業時間・週営業日数を変えたBを同じ30暦日で比較します。" />
-    <Panel className="scenario-panel">
-      <div className="scenario-headings"><div><Badge>SCENARIO A</Badge><h3>現在の設定</h3><p>{settings.business.mealsPerDay}食 · {formatNumber(scenarioAResult.totalOperatingHours)}時間 / 期間 · {scenarioAResult.operatingDays}営業日</p></div><div><Badge tone="positive">SCENARIO B</Badge><h3>比較案</h3><div className="scenario-inputs"><label><input type="number" value={scenarioB.meals} onChange={(event) => setScenarioB({ ...scenarioB, meals: numberValue(event.target.value) })}/>食</label><label><input type="number" value={scenarioB.hours} onChange={(event) => setScenarioB({ ...scenarioB, hours: numberValue(event.target.value) })}/>時間</label><label>週<input type="number" min="0" max="7" value={scenarioB.days} onChange={(event) => setScenarioB({ ...scenarioB, days: numberValue(event.target.value) })}/>日</label></div></div></div>
-      <div className="scenario-table">
-        <div className="scenario-row header"><span>比較項目</span><b>A</b><b>B</b><em>差分 B−A</em></div>
-        {([
-          ['売上', scenarioAResult.revenue, scenarioBResult.revenue],
-          ['総コスト', scenarioAResult.totalCost, scenarioBResult.totalCost],
-          ['営業利益', scenarioAResult.operatingProfit, scenarioBResult.operatingProfit],
-          ['会計上人件費', scenarioAResult.labor.accountingLaborCost, scenarioBResult.labor.accountingLaborCost],
-          ['水道光熱費', scenarioAResult.costs.water + scenarioAResult.costs.gas + scenarioAResult.costs.electricity, scenarioBResult.costs.water + scenarioBResult.costs.gas + scenarioBResult.costs.electricity],
-          ['1営業時間あたり利益', scenarioAResult.profitPerOperatingHour, scenarioBResult.profitPerOperatingHour],
-        ] as const).map(([label, a, b]) => <div className="scenario-row" key={label}><span>{label}</span><b>{formatYen(a)}</b><b>{formatYen(b)}</b><em className={b - a >= 0 ? 'positive' : 'negative'}>{b - a >= 0 ? '+' : ''}{formatYen(b - a)}</em></div>)}
-        <div className="scenario-row"><span>営業利益率</span><b>{formatPercent(scenarioAResult.operatingMargin)}</b><b>{formatPercent(scenarioBResult.operatingMargin)}</b><em className={scenarioBResult.operatingMargin - scenarioAResult.operatingMargin >= 0 ? 'positive' : 'negative'}>{formatPercent(scenarioBResult.operatingMargin - scenarioAResult.operatingMargin)}</em></div>
-      </div>
-    </Panel>
   </>
 }
 
@@ -452,7 +413,7 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
     <PageTitle eyebrow="DATA & BACKUP" title="データ管理" description="設定はこのブラウザに自動保存されます。JSONでバックアップ・移行できます。" />
     {message && <div className={`alert ${message.type}`}><Icon name="info" size={18}/><span>{message.text}</span></div>}
     <div className="data-action-grid">
-      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>現在の原材料・工程・メニュー・営業条件を1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
+      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績期間、Scenarioを1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
       <article><span className="data-icon import"><Icon name="data" size={26}/></span><h2>Import JSON</h2><p>SobaOpsから書き出した設定を読み込みます。現在の設定は上書きされます。</p><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }}/><Button onClick={() => fileInput.current?.click()}>ファイルを選択</Button></article>
       <article><span className="data-icon reset"><Icon name="store" size={26}/></span><h2>サンプルへ戻す</h2><p>入力内容を破棄し、初回起動時のサンプル蕎麦店データを復元します。</p><Button variant="danger" onClick={onReset}>初期状態へリセット</Button></article>
     </div>
@@ -463,6 +424,8 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
         <div><span>Processes</span><strong>{settings.processes.length}</strong></div>
         <div><span>Outputs</span><strong>{settings.processes.reduce((sum, process) => sum + process.outputs.length, 0)}</strong></div>
         <div><span>Menu items</span><strong>{settings.menuItems.length}</strong></div>
+        <div><span>Actual periods</span><strong>{settings.actualPeriods.length}</strong></div>
+        <div><span>Scenarios</span><strong>{settings.scenarios.length}</strong></div>
       </div>
       <details className="json-preview"><summary>JSONプレビュー</summary><pre>{JSON.stringify(settings, null, 2)}</pre></details>
     </Panel>
