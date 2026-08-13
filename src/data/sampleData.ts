@@ -1,4 +1,5 @@
 import type { AppSettings, Resource, SourceRef, Unit } from '../models/types'
+import { todayLocalDate } from '../calculations/calendar'
 
 const resource = (
   id: string,
@@ -34,7 +35,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
@@ -42,6 +43,7 @@ export const createSampleSettings = (): AppSettings => ({
     closingTime: '20:00',
     hoursPerDay: 9,
     operatingDaysPerMonth: 22,
+    simulationStartDate: todayLocalDate(),
     weekdays: ['月', '火', '水', '木', '金', '土', '日'].map((_, day) => ({
       day,
       enabled: day !== 2,
@@ -80,6 +82,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 90,
       activeLaborMinutes: 20,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0.25,
       electricUsageKWh: 0,
       waterUsageL: 2,
@@ -95,6 +98,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 10,
       activeLaborMinutes: 8,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0,
       electricUsageKWh: 0,
       waterUsageL: 1,
@@ -110,6 +114,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 20,
       activeLaborMinutes: 15,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0,
       electricUsageKWh: 0,
       waterUsageL: 5,
@@ -125,6 +130,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 45,
       activeLaborMinutes: 12,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0.18,
       electricUsageKWh: 0,
       waterUsageL: 4.3,
@@ -140,6 +146,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 45,
       activeLaborMinutes: 12,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0.18,
       electricUsageKWh: 0,
       waterUsageL: 4.7,
@@ -158,6 +165,7 @@ export const createSampleSettings = (): AppSettings => ({
       processDurationMinutes: 18,
       activeLaborMinutes: 15,
       laborRole: 'cook',
+      laborCostTreatment: 'withinScheduledShift',
       gasUsageM3: 0.22,
       electricUsageKWh: 0,
       waterUsageL: 2,

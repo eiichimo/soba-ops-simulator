@@ -100,7 +100,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps MVP</span><span>計算結果は意思決定の参考値です。実際の仕入・請求・勤務実績と照合してください。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 2</span><span>計算結果は意思決定の参考値です。実際の仕入・請求・勤務実績と照合してください。</span></footer>
     </div>
   </div>
 }

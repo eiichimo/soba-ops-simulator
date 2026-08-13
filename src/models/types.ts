@@ -17,6 +17,9 @@ export type StorageType = 'ambient' | 'refrigerated' | 'frozen'
 export type WasteReason = 'trimLoss' | 'cookingLoss' | 'spoilage' | 'unsold' | 'mistake'
 export type CostBehavior = 'perDay' | 'perHour' | 'perMeal' | 'perMonth' | 'perUse' | 'alwaysOn'
 export type PeriodKey = 'day' | 'month' | 'quarter' | 'halfYear' | 'year'
+export type LaborCostTreatment = 'withinScheduledShift' | 'additionalLabor'
+export type LaborCostMode = 'accounting' | 'decision'
+export type ValidationSeverity = 'error' | 'warning'
 
 export interface Resource {
   id: string
@@ -62,6 +65,7 @@ export interface Process {
   processDurationMinutes: number
   activeLaborMinutes: number
   laborRole: string
+  laborCostTreatment: LaborCostTreatment
   gasUsageM3: number
   electricUsageKWh: number
   waterUsageL: number
@@ -166,6 +170,7 @@ export interface BusinessSettings {
   closingTime: string
   hoursPerDay: number
   operatingDaysPerMonth: number
+  simulationStartDate: string
   weekdays: WeekdaySchedule[]
 }
 
@@ -211,10 +216,84 @@ export interface CostBreakdown {
   fixedMonthly: number
 }
 
+export interface LaborBreakdown {
+  shiftLaborCost: number
+  prepLaborAllocation: number
+  additionalPrepLaborCost: number
+  accountingLaborCost: number
+  marginalPrepLaborCost: number
+}
+
+export interface MenuCalculationDetail {
+  id: string
+  name: string
+  servings: number
+  revenue: number
+}
+
+export interface ResourceCalculationDetail {
+  id: string
+  name: string
+  quantity: number
+  unit: Unit
+  usageCost: number
+}
+
+export interface ProcessCalculationDetail {
+  id: string
+  name: string
+  batches: number
+  materialCost: number
+  activeLaborMinutes: number
+  laborAllocation: number
+  additionalLaborCost: number
+  marginalLaborCost: number
+}
+
+export interface UtilityCalculationDetail {
+  quantity: number
+  unit: Unit
+  usageCost: number
+}
+
+export interface CalculationDetails {
+  meals: number
+  menus: MenuCalculationDetail[]
+  resources: ResourceCalculationDetail[]
+  processes: ProcessCalculationDetail[]
+  utilities: {
+    water: UtilityCalculationDetail
+    gas: UtilityCalculationDetail
+    electricity: UtilityCalculationDetail
+  }
+  fryingOilLiters: number
+  fryingOilCost: number
+}
+
+export interface CalendarSummary {
+  startDate: string
+  endDateExclusive: string
+  calendarDays: number
+  operatingDays: number
+  totalOperatingHours: number
+  calendarMonths: number
+}
+
+export interface ValidationIssue {
+  severity: ValidationSeverity
+  code: string
+  message: string
+  path?: string
+}
+
 export interface SimulationResult {
   period: PeriodKey
+  startDate: string
+  endDateExclusive: string
+  calendarDays: number
   calendarMonths: number
   operatingDays: number
+  totalOperatingHours: number
   meals: number
   revenue: number
   menuRevenue: number
@@ -230,9 +309,12 @@ export interface SimulationResult {
   profitPerOperatingHour: number
   marginalCostPerMeal: number
   menuRatioTotal: number
+  labor: LaborBreakdown
+  details: CalculationDetails
 }
 
 export interface MakeBuyResult {
+  laborCostMode: LaborCostMode
   homemadeUnitCost: number
   purchasedUnitCost: number
   blendedUnitCost: number
@@ -245,4 +327,6 @@ export interface MakeBuyResult {
   monthlyAdditionalHours: number
   savingsPerWorkHour: number
   breakEvenMealsPerDay: number | null
+  homemadeLaborAllocation: number
+  homemadeMarginalLabor: number
 }
