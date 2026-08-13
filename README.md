@@ -1,6 +1,6 @@
 # SobaOps
 
-SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 6では、Phase 5までの経済・在庫・厨房能力モデルを維持しながら、seed付きの来店、Party、客席、着席待ち、離脱、滞在とMonte Carloによる下振れ分析を追加しました。
+SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 7では、Phase 6までの経済・在庫・厨房能力・確率需要モデルを再利用し、制約付き離散全探索、候補ランキング、Pareto分析、境界解検出を追加しました。
 
 単なる「1食原価」ではなく、固定費が販売量によってどう薄まるか、内製と既製品のどちらが有利か、営業時間や営業日数の変更が利益へどう影響するかを同じモデルから確認できます。初回起動時から、7種類の蕎麦メニューと原材料・仕込み工程を含むサンプル店舗が表示されます。
 
@@ -77,6 +77,11 @@ Viteの `base` はリポジトリPages用の `/soba-ops-simulator/` です。将
 - 来店・着席・注文・厨房完了・売上を分けたCustomer JourneyとRealized Sales
 - 明示実行型Monte Carlo（10〜1,000 run）、利益分布、p10 / p90、赤字率、目標利益達成率
 - 同じseed集合を使うMonte Carlo Scenario比較と代表run Inspector
+- StaffShift人数、Equipment容量、SeatingUnit卓数、営業時間、KitchenOperation時間を候補集合から探索するOptimization Study
+- 平均利益、p10利益、待ち時間、人件費、Realized Salesを目的に選べるdeterministic / Monte Carlo全探索
+- 人件費、利益、待ち時間、離脱率、Service Level、Staff・総席数などのConstraintとFeasible判定
+- Constraintを満たす上位候補、0件時の最小違反候補、Base差、探索境界、簡易設備投資回収日数の表示
+- 平均営業利益とp90厨房待ちのPareto Frontier、および候補の非破壊Scenario保存
 - g / kg、ml / Lの自動換算と、不正な単位・参照・工程循環などのValidation
 - メニュー、Resource、Process、水道光熱、揚げ油まで追跡できる折りたたみ式の計算詳細
 - Inventory Lotを営業日・休業日を通して持ち越す日次状態遷移
@@ -113,6 +118,9 @@ Resource → Process → Output → Inventory → Consumption
 - `Party`: 来店時刻、人数、着席・注文・提供・退店または離脱を追跡するCustomer Journey単位です。Partyは複数席へ分割しません。
 - `SeatingUnit`: カウンターまたはテーブルの1単位あたり収容人数、単位数、有効状態を持ちます。
 - `StochasticDemandSettings`: seed、Party人数確率、客席、注文遅延、滞在時間、最大席待ち、Monte Carlo条件をまとめます。
+- `OptimizationStudy`: Objective、評価方式、離散Variable、Constraint、共通seed・run数、候補上限と保存済み集計をまとめます。
+- `OptimizationVariable`: StaffShift、Equipment、SeatingUnit、開閉店時刻、KitchenOperationの対象と候補値を保持します。UIのmin / max / stepも実行前に離散候補へ展開します。
+- `OptimizationConstraint`: 評価指標、`<= / >=`、基準値を持ちます。各候補は`feasible`と具体的な違反量を保持します。
 
 たとえば店舗用かえしは「内製かえし 2 L + 既製かえし 1 L → 店舗用かえし 3 L」という通常のProcessです。画面上でInput数量を変えれば、特殊なかえし専用ロジックを使わず混合比率が変わります。
 
@@ -312,6 +320,39 @@ Party人数分のOrderを既存Capacity Engineへ流し、全Order完了時をPa
 
 Scenario比較はBaseと各Scenarioの同じrun indexへ同じseedを渡します。需要乱数を揃えたうえで、平均利益、p10利益、離脱率、総待ちの差を比較します。平均改善と下振れ改善を別々に判断でき、Scenario OverrideはBaseを変更しません。
 
+### 制約付きOptimization・Pareto
+
+[src/calculations/optimizationEngine.ts](src/calculations/optimizationEngine.ts) は新しい利益・Queue計算式を持たず、候補Overrideを既存Scenario適用機構へ渡し、Economic / Capacity / Demand / Seating / Monte Carlo Engineで評価します。評価期間はCapacity画面と同じ1営業日で、利益・人件費・Realized Salesは日次指標です。探索は非線形なFIFO、バッチ、購入package、Queue、離脱を線形化せず、離散候補のCartesian productを全列挙するExhaustive Searchです。
+
+```text
+Variable候補集合
+→ Cartesian product
+→ 既存Engine評価
+→ Constraint判定
+→ Feasible優先Ranking
+→ Pareto Frontier
+```
+
+Objectiveの意味は次のとおりです。
+
+- `maximizeMeanOperatingProfit`: deterministicでは単一runのRealized営業利益、Monte Carloではrun平均を最大化します。
+- `maximizeP10OperatingProfit`: Monte Carloの下側10パーセンタイル利益を最大化します。deterministicでは選択できません。
+- `minimizeAverageWait`: 平均厨房待ち時間を最小化します。
+- `minimizeLaborCost`: Capacity StaffShiftの`時給 × Shift時間 × headcount`を最小化します。
+- `maximizeRealizedSales`: 客席離脱とKitchen Workflow完了を反映した提供食数を最大化します。
+
+Constraintは最大人件費、最小平均 / p10利益、最大平均 / p90厨房待ち、最大離脱率、最小Realized Sales / Service Level、最大Staff人数・総座席数・閉店後処理時間を扱います。`feasible`は全Constraintを満たす候補です。Feasible候補が0件なら、各違反量を`違反量 / max(1, |基準値|)`で正規化して合計し、最も条件へ近い候補を表示します。Constraint境界から5%以内は「ぎりぎり」の確認候補として表示します。
+
+Monte Carlo評価は全候補へ`baseSeed + runIndex`の同じseed集合を適用するCommon Random Numbers方式です。候補間の差を別々の需要乱数で汚さず、平均利益とp10利益を同じ来店サンプルで比較します。Optimization画面は入力変更で自動実行せず、明示的な実行ボタン、候補進捗、キャンセルを持ちます。初期上限は10,000候補、hard limitは50,000候補で、上限超過時に勝手な間引きはしません。
+
+Pareto判定は、候補Aが候補Bに対して`平均営業利益 >= B`かつ`p90厨房待ち <= B`で、少なくとも片方が厳密に優れる場合にAがBをdominateすると定義します。dominateされない候補をPareto Frontierへ残すため、利益最大だけでなく、利益を少し譲って待ち時間を短くする候補も比較できます。最上位候補がVariable候補の最小値・最大値にある場合は境界解として明示し、探索範囲外で改善する可能性を隠しません。
+
+Staff人数候補はCapacity処理能力とStaffShift人件費の両方、Equipment容量は処理能力、SeatingUnit卓数は着席・離脱・総席数へ反映します。開閉店候補は曜日別営業時間へ適用し、営業時間外になったStaffShift部分を切り詰めます。延長時にShiftを自動延長はしません。短縮区間の需要は失われます。延長区間を覆うDemand / Arrival Profileがない候補は警告を付けるため、明示的な需要0を含むProfileを設定するまで結果を需要0の断定として解釈しないでください。
+
+Equipmentの`upgradeCostPerCapacityUnit`またはVariable別Adjustment CostからBase超過分の初期投資額を計算します。正式な減価償却ではなく、`初期投資額 / 1営業日あたり追加平均営業利益`を簡易回収営業日数として別表示します。追加利益が0以下なら「回収不可」です。投資額は営業利益へ混ぜません。
+
+Optimization結果はBaseを自動変更しません。「Scenarioとして保存」で既存Scenario Overrideへ明示的に保存した場合だけ通常のScenario比較へ渡します。localStorage / JSONにはStudy設定と上位20件・Pareto50件の集計だけを保存し、全Monte Carlo runの巨大な明細は保存しません。表示する候補は入力モデルと探索範囲内の「有力候補」であり、現実の唯一の最適解ではありません。
+
 ### 需要売上と能力制約後利益
 
 - 需要食数: DemandProfileに入力された注文数です。
@@ -348,10 +389,13 @@ Inventory消費は引き続き分単位同期ではなく日次集計です。�
 10. 厨房能力は需要を上書きしません。需要ベースと提供可能ベースを並べ、能力制約後利益は既存Economic Engineを完了食数で再利用する日次近似です。
 11. deterministic modeはPhase 5の均等配置をそのまま維持します。stochastic modeだけがseed付き乱数、Party、着席と離脱を利用します。
 12. Realized Salesは来店・着席・注文ではなく、Kitchen Workflowを完了したOrderだけを売上計上します。
+13. Optimizationは候補生成・Constraint・Rankingだけを担当し、利益、使用原価、購入支出、Capacity、離脱、Monte Carloの定義を変更しません。
+14. 販売価格、潜在需要、Party構成、原材料市場価格、Actualは自動探索しません。需要弾力性・将来予測がない状態で動かすと意味のない「最適値」になり得るためです。
+15. Monte Carlo Optimizationは全候補に共通seed集合を使用し、平均Objectiveとp10 Objectiveを分けます。Paretoは平均営業利益とp90厨房待ちの二軸で判定します。
 
 ### Validationと計算詳細
 
-DashboardはErrorとWarningを分けて表示します。Errorは存在しないResource / Output / Lot参照、単位不整合、負の在庫、Process循環、0以下の購入package・最低購入数・バッチ・Output数量、不正な歩留まり・価格・営業時間・原価配賦率などです。Capacityではさらに、0以下のEquipment容量・工程時間・バッチ容量、不正なactive時間・設備占有、存在しないEquipment / LaborRole / Workflow依存、営業時間外StaffShift、負の人数、Workflow循環をErrorにします。Phase 6では不正なArrival範囲、Party人数・確率、客席容量・卓数、注文遅延・滞在・最大席待ち、Monte Carlo run数も検証します。WarningはDemandProfile / Party確率合計不一致、営業時間外Arrival、0来店・0席、必要Shiftなし、初期参考値、利用率や離脱率・空席損失の高さなどです。
+DashboardはErrorとWarningを分けて表示します。Errorは存在しないResource / Output / Lot参照、単位不整合、負の在庫、Process循環、0以下の購入package・最低購入数・バッチ・Output数量、不正な歩留まり・価格・営業時間・原価配賦率などです。Capacityではさらに、0以下のEquipment容量・工程時間・バッチ容量、不正なactive時間・設備占有、存在しないEquipment / LaborRole / Workflow依存、営業時間外StaffShift、負の人数、Workflow循環をErrorにします。Phase 6では不正なArrival範囲、Party人数・確率、客席容量・卓数、注文遅延・滞在・最大席待ち、Monte Carlo run数も検証します。Phase 7では空のVariable候補、min > max、step <= 0、不存在target、不正候補値・Constraint、p10 Objectiveのdeterministic指定、候補hard limit超過をErrorにします。WarningはDemandProfile / Party確率合計不一致、営業時間外Arrival、0来店・0席、必要Shiftなし、初期参考値、利用率や離脱率・空席損失、候補数・Monte Carlo run数の不足、未設定の設備変更コストなどです。
 
 「計算詳細・検算内訳」では、従来のメニュー、Process、水道光熱に加え、Resource / Output別の期首、購入、内製、副産物、使用、廃棄、期末、使用原価、購入支出を確認できます。在庫・仕入画面では仕入履歴、廃棄理由、日次在庫推移、期末Lotを追跡できます。
 
@@ -361,15 +405,17 @@ DashboardはErrorとWarningを分けて表示します。Errorは存在しない
 
 UIでは「初期参考値」と表示し、すべて編集可能です。実際の経営判断では、請求書、仕入明細、勤務実績に置き換えてください。
 
-そば釜6食、茹で2.5分、フライヤー8本・3.5分、洗浄・盛付・提供時間、時間帯別需要も動作確認用の初期参考Capacityです。実設備の性能、作業観測、ピーク注文記録へ更新してください。
+そば釜6食、茹で2.5分、フライヤー8本・3.5分、洗浄・盛付・提供時間、時間帯別需要も動作確認用の初期参考Capacityです。そば釜の容量1単位あたり投資50,000円も回収日数表示を確認するための仮値です。実設備の性能、見積額、作業観測、ピーク注文記録へ更新してください。
 
 Party人数（1人40%、2人40%、3人10%、4人8%、5人2%）、カウンター8席、2人席4卓、4人席3卓、注文まで3分、提供後滞在25分、最大席待ち20分もPhase 6の動作確認用参考値です。実際の来店記録、Party構成、席配置、滞在観測へ更新してください。
+
+初期Optimization Studyは調理Staff 1〜3人、そば釜4 / 6 / 8食、p90厨房待ち10分以下、離脱率5%以下を探索する動作確認用参考値です。実際の配置可能人数、設備候補、投資額、サービス水準へ更新してください。
 
 ## 保存とJSON
 
 - localStorage key: `sobaops.settings.v1`
-- current schema: `schemaVersion: 6`
-- v1〜v5のlocalStorageとExport JSONは読み込み時にv6へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では既存Menuごとの標準Workflow、汎用調理台・標準提供工程、既存LaborRole由来のStaffShift、`mealsPerDay`と一致するDemandProfileを補います。v5 → v6では既存Capacity設定を保持したまま`demandMode: 'deterministic'`を既定にし、Arrival、Party人数分布、客席、注文遅延、滞在、最大席待ち、Monte Carlo設定を安全な初期参考値として追加します。
+- current schema: `schemaVersion: 7`
+- v1〜v6のlocalStorageとExport JSONは読み込み時にv7へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では既存Menuごとの標準Workflow、汎用調理台・標準提供工程、既存LaborRole由来のStaffShift、`mealsPerDay`と一致するDemandProfileを補います。v5 → v6では既存Capacity設定を保持したまま`demandMode: 'deterministic'`を既定にし、Arrival、Party人数分布、客席、注文遅延、滞在、最大席待ち、Monte Carlo設定を安全な初期参考値として追加します。v6 → v7では既存設定を変更せず`optimizationStudies: []`を追加します。
 - 新規サンプルの仕込み工程は実態に合わせて `withinScheduledShift` です。そのためサンプルへリセットすると、v1サンプルのような仕込み人件費の二重加算は行いません。
 - localStorage keyは既存データを発見するため意図的に `sobaops.settings.v1` のままです。保存されるJSONのschemaVersionとは別です。
 - Import時に最低限の構造とschemaVersionを検証し、計算設定の詳細は画面上のValidationで確認できます。
@@ -379,7 +425,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 
 ## テスト
 
-[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/seatingEngine.test.ts](src/calculations/seatingEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
+[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/seatingEngine.test.ts](src/calculations/seatingEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/optimizationEngine.test.ts](src/calculations/optimizationEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
 
 - 歩留まりと実質単価
 - 1食分の原材料費
@@ -393,7 +439,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 不存在Source、Process循環のValidation
 - schemaVersion v1 → v2移行
 - schemaVersion v2 → v3移行
-- schemaVersion v3 → v4、v4 → v5、v5 → v6、およびv1 → v6連続移行
+- schemaVersion v3 → v4、v4 → v5、v5 → v6、v6 → v7、およびv1 → v7連続移行
 - 揚げ油交換周期
 - 内製 vs 既製品比較とROI
 - FIFO、複数取得価格Lot、購入package、最低購入数
@@ -418,12 +464,20 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - Seat turnover / utilization / unusedSeatMinutesと既存Kitchen Capacity接続
 - Monte Carlo run数・共通seed、mean / median / percentile、赤字run率、100 runサンプル
 - Scenario共通seed比較とBase非破壊、Phase 6 Validation
+- 1件・複数Variableの候補生成、Cartesian product、min / max / step、候補hard limit
+- 平均 / p10利益、待ち時間、人件費、Realized Sales ObjectiveのRanking
+- 待ち・離脱・利益・人件費・総席数を含む単一 / 複数ConstraintとFeasible判定
+- Staff人数の人件費 / Capacity反映、Equipment throughput、Seating離脱、営業時間Override
+- Optimization Monte Carloの共通seed集合、再現性、run数変更
+- Pareto dominance、dominated除外、複数trade-off候補
+- 境界解、Feasible 0件時の最小違反候補、設備投資回収日数
+- Optimization候補のScenario化とBase非破壊、Phase 7 Validation
 
 ## ディレクトリ構成
 
 ```text
 src/
-  calculations/   # UI非依存の損益・在庫・意思決定・Capacity・Demand・Seating・Monte Carlo Engineとテスト
+  calculations/   # UI非依存の損益・在庫・意思決定・Capacity・Demand・Seating・Monte Carlo・Optimization Engineとテスト
   components/     # Dashboard、編集画面、グラフ、UI部品
   data/           # 初回サンプル店舗
   models/         # 中心データ型
@@ -442,7 +496,8 @@ src/
 - 予約、テーブル結合、Party分割、相席、待ち時間に応じた確率離脱
 - Menu別の注文遅延・滞在時間、厨房工程時間のランダム化、デリバリー注文
 - 分単位Inventory同期、食材欠品によるメニュー停止、閉店後残業割増
-- Phase 7候補の席構成・StaffShift・Equipment・営業時間・仕込み量のOptimization
+- 二段階探索、Web Worker、候補結果Cache、内製 / 既製品比率・仕込み量のOptimization
+- 面積・設備設置制約、正式な設備減価償却、複数Pareto軸のUI切替、自動最適化
 - 詳細な未販売・期限切れ・作業ミス廃棄入力
 - ActualのCSV / POS / 請求書 / 会計ソフトImport、実績から設定への確認付き適用
 - 任意の感度変化率、複数パラメータ同時感度、メニュー構成・内製比率感度

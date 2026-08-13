@@ -253,7 +253,7 @@ const nextOpenDate = (settings: AppSettings) => {
   return getCapacityBusinessDay(settings).date
 }
 
-const capacityStaffCost = (settings: AppSettings) => settings.capacity.staffShifts.reduce((total, shift) => {
+export const calculateCapacityStaffCost = (settings: AppSettings) => settings.capacity.staffShifts.reduce((total, shift) => {
   const role = settings.labor.find((item) => item.id === shift.laborRoleId)
   const duration = Math.max(0, minuteOfDay(shift.endTime) - minuteOfDay(shift.startTime))
   return total + (role?.hourlyWage ?? 0) * shift.headcount * duration / 60
@@ -499,7 +499,7 @@ export const simulateCapacity = (
     ...(completedResults.length > 0 && targetExceededCount / completedResults.length >= 0.2 ? [`許容待ち時間を超えた注文が${targetExceededCount}件あります。工程・設備・Shiftを確認してください。`] : []),
   ]
 
-  const staffShiftCost = capacityStaffCost(settings)
+  const staffShiftCost = calculateCapacityStaffCost(settings)
   const includeEconomic = options.includeEconomic ?? true
   const economicSettings: AppSettings = {
     ...settings,

@@ -571,6 +571,53 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
 .scenario-comparison-table th, .scenario-comparison-table td { text-align: right; }
 .scenario-comparison-table th:first-child, .scenario-comparison-table td:first-child { text-align: left; }
 
+/* Phase 7: constrained exhaustive search and Pareto analysis */
+.optimization-flow { margin: -5px 0 18px; padding: 12px 16px; display: flex; align-items: center; justify-content: center; gap: 13px; border: 1px solid var(--line); border-radius: 9px; color: var(--green-2); background: rgba(250,249,244,.8); font-size: 8px; font-weight: 700; }
+.optimization-flow i { color: #b5b0a5; font-style: normal; }
+.optimization-variable-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 11px; }
+.optimization-variable-list .editor-card { margin: 0; }
+.optimization-range { margin-top: 10px; }
+.optimization-base-value { min-height: 55px; padding: 8px 10px; display: flex; flex-direction: column; justify-content: center; border: 1px solid var(--line); border-radius: 8px; background: #faf9f5; }
+.optimization-base-value span { color: var(--faint); font-size: 7px; }
+.optimization-base-value strong { margin-top: 5px; color: var(--green); font-size: 10px; }
+.optimization-variable-list .card-actions small { margin-right: auto; color: var(--faint); font-size: 8px; }
+.optimization-constraint-row { grid-template-columns: minmax(170px, 1.3fr) 100px minmax(150px, 1fr) auto; }
+.optimization-run-panel { border-color: #c9d5cd; background: linear-gradient(135deg, #f8faf7, #f4f0e7); }
+.optimization-run-actions { display: flex; gap: 7px; }
+.optimization-summary-grid { display: grid; grid-template-columns: 1.6fr repeat(4, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--line); border-radius: 9px; background: var(--line); }
+.optimization-summary-grid > div { min-height: 71px; padding: 13px; display: flex; flex-direction: column; justify-content: center; background: white; }
+.optimization-summary-grid span { color: var(--faint); font-size: 7px; }
+.optimization-summary-grid strong { margin-top: 6px; color: #414a43; font-size: 10px; }
+.optimization-progress { margin-top: 13px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; }
+.optimization-progress progress { width: 100%; height: 8px; accent-color: var(--green-2); }
+.optimization-progress span { color: var(--muted); font-size: 8px; }
+.optimization-result-kpis { margin-bottom: 17px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 9px; }
+.optimization-result-kpis article { padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: white; }
+.optimization-result-kpis span, .optimization-result-kpis strong { display: block; }
+.optimization-result-kpis span { color: var(--faint); font-size: 8px; }
+.optimization-result-kpis strong { margin-top: 6px; color: var(--green); font-size: 17px; }
+.optimization-filter { display: flex; gap: 4px; padding: 3px; border-radius: 7px; background: #efede7; }
+.optimization-filter button { border: 0; border-radius: 5px; padding: 6px 9px; color: var(--muted); background: transparent; font-size: 8px; }
+.optimization-filter button.active { color: white; background: var(--green-2); }
+.optimization-ranking tbody tr { cursor: pointer; }
+.optimization-ranking tbody tr:hover, .optimization-ranking tbody tr.selected { background: #eef4f0; }
+.optimization-ranking td:nth-child(2) { min-width: 220px; white-space: normal; }
+.optimization-chart svg { min-width: 620px; }
+.candidate-dot { fill: #91a59a; opacity: .62; }
+.pareto-dot { fill: var(--gold); stroke: #725b29; stroke-width: 1.5; }
+.optimization-recommendation { margin-bottom: 12px; padding: 12px 14px; display: flex; align-items: center; gap: 10px; border: 1px solid #d8dfd9; border-radius: 9px; background: #f2f6f3; }
+.optimization-recommendation p { margin: 0; color: #59635c; font-size: 8px; line-height: 1.7; }
+.candidate-detail-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.candidate-detail-grid > div { padding: 14px; border: 1px solid var(--line); border-radius: 9px; background: #fbfaf7; }
+.candidate-detail-grid h3, .constraint-violation-list h3 { margin: 0 0 10px; color: var(--green); font-size: 10px; }
+.candidate-detail-grid p { margin: 0; padding: 7px 0; display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px solid #ece9e1; font-size: 8px; }
+.candidate-detail-grid p:last-child { border-bottom: 0; }
+.candidate-detail-grid p span { color: var(--faint); }
+.candidate-detail-grid p strong { color: #444b45; text-align: right; }
+.candidate-detail-grid p small { color: var(--green-2); font-size: 7px; }
+.constraint-violation-list { margin-top: 12px; padding: 13px; border-radius: 9px; background: #f8eee7; }
+.constraint-violation-list p { margin: 6px 0 0; display: flex; align-items: center; gap: 8px; color: #76594a; font-size: 8px; }
+
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 215px minmax(0, 1fr); }
   main { padding: 34px 28px 55px; }
@@ -584,6 +631,9 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
   .inventory-kpi-grid { grid-template-columns: repeat(3, 1fr); }
   .actual-input-grid { grid-template-columns: 1fr; }
   .efficiency-grid { grid-template-columns: repeat(2, 1fr); }
+  .optimization-variable-list { grid-template-columns: 1fr; }
+  .optimization-summary-grid { grid-template-columns: repeat(3, 1fr); }
+  .candidate-detail-grid { grid-template-columns: 1fr 1fr; }
 }
 
 @media (max-width: 900px) {
@@ -684,4 +734,10 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
   .page-action-row > select { flex: 1; }
   .actual-utility-grid, .decision-summary, .sensitivity-controls, .efficiency-grid, .calibration-hints { grid-template-columns: 1fr; }
   .actual-menu-sales > div { grid-template-columns: 1fr; }
+  .optimization-flow { overflow-x: auto; justify-content: flex-start; white-space: nowrap; }
+  .optimization-constraint-row { grid-template-columns: 1fr; }
+  .optimization-summary-grid, .optimization-result-kpis, .candidate-detail-grid { grid-template-columns: 1fr; }
+  .optimization-filter { width: 100%; }
+  .optimization-filter button { flex: 1; }
+  .optimization-recommendation { align-items: flex-start; flex-direction: column; }
 }

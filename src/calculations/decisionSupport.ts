@@ -14,6 +14,7 @@ import type {
   VarianceRow,
 } from '../models/types'
 import { simulate, simulateDateRange } from './engine'
+import { timeToMinutes } from './calendar'
 import { tryConvertQuantity } from './units'
 
 const EPSILON = 1e-9
@@ -185,6 +186,45 @@ const scheduleDuration = (openingTime: string, closingTime: string) => {
   return Math.max(0, (closingHour * 60 + closingMinute - openingHour * 60 - openingMinute) / 60)
 }
 
+const minutesToTime = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(Math.round(minutes % 60)).padStart(2, '0')}`
+
+const settingsWithKitchenTimes = (settings: AppSettings, openingTime?: string, closingTime?: string): AppSettings => {
+  const nextOpening = openingTime ?? settings.business.openingTime
+  const nextClosing = closingTime ?? settings.business.closingTime
+  const openingMinute = timeToMinutes(nextOpening)
+  const closingMinute = timeToMinutes(nextClosing)
+  if (openingMinute === null || closingMinute === null || closingMinute <= openingMinute) return settings
+  return {
+    ...settings,
+    business: {
+      ...settings.business,
+      openingTime: nextOpening,
+      closingTime: nextClosing,
+      hoursPerDay: (closingMinute - openingMinute) / 60,
+      weekdays: settings.business.weekdays.map((schedule) => ({
+        ...schedule,
+        openingTime: nextOpening,
+        closingTime: nextClosing,
+      })),
+    },
+    capacity: {
+      ...settings.capacity,
+      staffShifts: settings.capacity.staffShifts.map((shift) => {
+        const start = timeToMinutes(shift.startTime) ?? openingMinute
+        const end = timeToMinutes(shift.endTime) ?? closingMinute
+        const clampedStart = Math.max(openingMinute, start)
+        const clampedEnd = Math.min(closingMinute, end)
+        if (clampedEnd <= clampedStart) return { ...shift, startTime: nextOpening, endTime: nextClosing, headcount: 0 }
+        return {
+          ...shift,
+          startTime: minutesToTime(clampedStart),
+          endTime: minutesToTime(clampedEnd),
+        }
+      }),
+    },
+  }
+}
+
 const settingsWithHours = (settings: AppSettings, hours: number): AppSettings => ({
   ...settings,
   business: {
@@ -302,6 +342,9 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
     },
   }
   if (overrides.business?.hoursPerDay !== undefined) result = settingsWithHours(result, overrides.business.hoursPerDay)
+  if (overrides.kitchenOpeningTime !== undefined || overrides.kitchenClosingTime !== undefined) {
+    result = settingsWithKitchenTimes(result, overrides.kitchenOpeningTime, overrides.kitchenClosingTime)
+  }
   if (overrides.business?.operatingDaysPerWeek !== undefined) result = settingsWithOperatingDays(result, overrides.business.operatingDaysPerWeek)
   return result
 }

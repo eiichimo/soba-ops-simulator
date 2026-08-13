@@ -5,7 +5,7 @@ import { todayLocalDate } from '../calculations/calendar'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 6
+export const CURRENT_SCHEMA_VERSION = 7
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -20,6 +20,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && (candidate.schemaVersion < 4 || (Array.isArray(candidate.actualPeriods) && Array.isArray(candidate.scenarios)))
     && (candidate.schemaVersion < 5 || !!candidate.capacity)
     && (candidate.schemaVersion < 6 || (!!candidate.capacity?.stochasticDemand && !!candidate.capacity?.demandMode))
+    && (candidate.schemaVersion < 7 || Array.isArray(candidate.optimizationStudies))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -93,6 +94,12 @@ export const migrateV5ToV6 = (settings: AppSettings): AppSettings => ({
   },
 })
 
+export const migrateV6ToV7 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 7,
+  optimizationStudies: settings.optimizationStudies ?? [],
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
@@ -100,6 +107,7 @@ export const migrateSettings = (settings: AppSettings): AppSettings => {
   if (migrated.schemaVersion === 3) migrated = migrateV3ToV4(migrated)
   if (migrated.schemaVersion === 4) migrated = migrateV4ToV5(migrated)
   if (migrated.schemaVersion === 5) migrated = migrateV5ToV6(migrated)
+  if (migrated.schemaVersion === 6) migrated = migrateV6ToV7(migrated)
   return migrated
 }
 

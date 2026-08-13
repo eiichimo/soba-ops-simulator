@@ -1,6 +1,11 @@
 import { getScheduleForDate, parseLocalDate, scheduleHours, timeToMinutes } from '../calculations/calendar'
+import { calculateOptimizationCandidateCount, expandOptimizationVariableValues, OPTIMIZATION_WARNING_CANDIDATES } from '../calculations/optimizationEngine'
 import { areUnitsCompatible } from '../calculations/units'
 import type { AppSettings, SourceRef, ValidationIssue } from '../models/types'
+
+const optimizationVariableTypes = new Set(['staffShiftHeadcount', 'equipmentCapacity', 'seatingUnitCount', 'openingTime', 'closingTime', 'kitchenOperationDuration'])
+const optimizationObjectives = new Set(['maximizeMeanOperatingProfit', 'maximizeP10OperatingProfit', 'minimizeAverageWait', 'minimizeLaborCost', 'maximizeRealizedSales'])
+const optimizationConstraintMetrics = new Set(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'averageKitchenWait', 'p90KitchenWait', 'abandonmentRate', 'realizedSales', 'serviceLevel', 'staffCount', 'totalSeats', 'afterClosingMinutes'])
 
 const issue = (
   severity: ValidationIssue['severity'],
@@ -120,6 +125,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     const path = `capacity.equipment.${index}`
     if (item.capacity <= 0) issues.push(issue('error', 'invalid-equipment-capacity', `${item.name}の同時処理容量は0より大きくしてください。`, path))
     if (item.concurrentJobs <= 0) issues.push(issue('error', 'invalid-equipment-concurrency', `${item.name}の同時Job数は1以上にしてください。`, path))
+    if (item.upgradeCostPerCapacityUnit !== undefined && item.upgradeCostPerCapacityUnit < 0) issues.push(issue('error', 'negative-equipment-upgrade-cost', `${item.name}の容量1単位あたり投資は0円以上にしてください。`, path))
   }
 
   for (const [index, operation] of settings.capacity.operations.entries()) {
@@ -325,6 +331,11 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     }
     const days = scenario.overrides.business?.operatingDaysPerWeek
     if (days !== undefined && (days < 0 || days > 7)) issues.push(issue('error', 'invalid-scenario-operating-days', `${scenario.name}の週営業日数は0〜7日にしてください。`, path))
+    if (scenario.overrides.kitchenOpeningTime !== undefined || scenario.overrides.kitchenClosingTime !== undefined) {
+      const opening = timeToMinutes(scenario.overrides.kitchenOpeningTime ?? settings.business.openingTime)
+      const closing = timeToMinutes(scenario.overrides.kitchenClosingTime ?? settings.business.closingTime)
+      if (opening === null || closing === null || closing <= opening) issues.push(issue('error', 'invalid-scenario-business-hours', `${scenario.name}の開閉店時刻が正しくありません。`, path))
+    }
     for (const resourceId of Object.keys(scenario.overrides.resourcePurchasePriceMultipliers ?? {})) {
       if (!resources.has(resourceId)) issues.push(issue('error', 'missing-scenario-resource', `${scenario.name}の対象Resource「${resourceId}」が見つかりません。`, path))
     }
@@ -346,6 +357,107 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     }
   }
   if (settings.scenarios.length > 5) issues.push(issue('warning', 'too-many-scenarios', '比較表示は先頭5件のScenarioまでです。', 'scenarios'))
+
+  for (const [studyIndex, study] of settings.optimizationStudies.entries()) {
+    const studyPath = `optimizationStudies.${studyIndex}`
+    if (!optimizationObjectives.has(study.objective) || (study.evaluationMode !== 'deterministic' && study.evaluationMode !== 'monteCarlo')) {
+      issues.push(issue('error', 'invalid-optimization-study-mode', `${study.name}のObjectiveまたは評価方式が正しくありません。`, studyPath))
+    }
+    if (study.variables.length === 0) issues.push(issue('error', 'optimization-no-variables', `${study.name}には探索Variableがありません。`, `${studyPath}.variables`))
+    if (study.maxCandidates <= 0 || study.hardCandidateLimit <= 0 || study.hardCandidateLimit > 50_000) {
+      issues.push(issue('error', 'invalid-optimization-limit', `${study.name}の候補上限は1〜50,000件にしてください。`, studyPath))
+    }
+    if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns <= 0) {
+      issues.push(issue('error', 'invalid-optimization-runs', `${study.name}のMonte Carlo run数は1以上にしてください。`, `${studyPath}.monteCarloRuns`))
+    }
+    if (study.objective === 'maximizeP10OperatingProfit' && study.evaluationMode !== 'monteCarlo') {
+      issues.push(issue('error', 'optimization-objective-requires-monte-carlo', `${study.name}のp10利益ObjectiveにはMonte Carlo評価が必要です。`, `${studyPath}.objective`))
+    }
+    if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns > 0 && study.monteCarloRuns < 30) {
+      issues.push(issue('warning', 'low-optimization-runs', `${study.name}のMonte Carlo run数が少ないため、上位候補を追加検証してください。`, `${studyPath}.monteCarloRuns`))
+    }
+
+    for (const [variableIndex, variable] of study.variables.entries()) {
+      const variablePath = `${studyPath}.variables.${variableIndex}`
+      if (!optimizationVariableTypes.has(variable.type)) issues.push(issue('error', 'invalid-optimization-variable-type', `${variable.name}のVariable種類が正しくありません。`, variablePath))
+      if (variable.values.length === 0 && variable.min !== undefined && variable.max !== undefined && variable.min > variable.max) {
+        issues.push(issue('error', 'optimization-min-greater-than-max', `${variable.name}のminはmax以下にしてください。`, variablePath))
+      }
+      if (variable.values.length === 0 && variable.step !== undefined && variable.step <= 0) {
+        issues.push(issue('error', 'invalid-optimization-step', `${variable.name}のstepは0より大きくしてください。`, variablePath))
+      }
+      const values = expandOptimizationVariableValues(variable)
+      if (values.length === 0) issues.push(issue('error', 'optimization-variable-empty', `${variable.name}に候補値がありません。`, variablePath))
+      const targetExists = variable.type === 'staffShiftHeadcount'
+        ? settings.capacity.staffShifts.some((shift) => shift.id === variable.targetId)
+        : variable.type === 'equipmentCapacity'
+          ? settings.capacity.equipment.some((item) => item.id === variable.targetId)
+          : variable.type === 'seatingUnitCount'
+            ? stochastic.seatingUnits.some((unit) => unit.id === variable.targetId)
+            : variable.type === 'kitchenOperationDuration'
+              ? settings.capacity.operations.some((operation) => operation.id === variable.targetId)
+              : true
+      if (!targetExists) issues.push(issue('error', 'missing-optimization-target', `${variable.name}の探索対象が見つかりません。`, variablePath))
+      for (const value of values) {
+        if ((variable.type === 'staffShiftHeadcount' || variable.type === 'seatingUnitCount') && (typeof value !== 'number' || value < 0)) {
+          issues.push(issue('error', 'negative-optimization-candidate', `${variable.name}の候補人数・卓数は0以上にしてください。`, variablePath))
+          break
+        }
+        if ((variable.type === 'equipmentCapacity' || variable.type === 'kitchenOperationDuration') && (typeof value !== 'number' || value <= 0)) {
+          issues.push(issue('error', 'invalid-optimization-candidate', `${variable.name}の容量・時間候補は0より大きくしてください。`, variablePath))
+          break
+        }
+        if ((variable.type === 'openingTime' || variable.type === 'closingTime') && (typeof value !== 'string' || timeToMinutes(value) === null)) {
+          issues.push(issue('error', 'invalid-optimization-time', `${variable.name}の時刻候補が正しくありません。`, variablePath))
+          break
+        }
+      }
+      if (variable.type === 'equipmentCapacity' && !settings.capacity.equipment.find((item) => item.id === variable.targetId)?.upgradeCostPerCapacityUnit
+        && Object.keys(variable.adjustmentCosts ?? {}).length === 0) {
+        issues.push(issue('warning', 'missing-equipment-adjustment-cost', `${variable.name}の設備変更コストが未設定です。利益とは別に投資条件を確認してください。`, variablePath))
+      }
+      if (Object.values(variable.adjustmentCosts ?? {}).some((cost) => !Number.isFinite(cost) || cost < 0)) {
+        issues.push(issue('error', 'invalid-optimization-adjustment-cost', `${variable.name}の候補変更コストは0円以上にしてください。`, variablePath))
+      }
+    }
+
+    if (new Set(study.variables.map((variable) => variable.id)).size !== study.variables.length) {
+      issues.push(issue('error', 'duplicate-optimization-variable-id', `${study.name}のVariable IDが重複しています。`, `${studyPath}.variables`))
+    }
+    const openingVariable = [...study.variables].reverse().find((variable) => variable.type === 'openingTime')
+    const closingVariable = [...study.variables].reverse().find((variable) => variable.type === 'closingTime')
+    const openingCandidates = openingVariable ? expandOptimizationVariableValues(openingVariable) : [settings.business.openingTime]
+    const closingCandidates = closingVariable ? expandOptimizationVariableValues(closingVariable) : [settings.business.closingTime]
+    if (openingCandidates.some((opening) => closingCandidates.some((closing) => (
+      typeof opening !== 'string' || typeof closing !== 'string'
+      || timeToMinutes(opening) === null || timeToMinutes(closing) === null
+      || (timeToMinutes(closing) ?? 0) <= (timeToMinutes(opening) ?? 0)
+    )))) {
+      issues.push(issue('error', 'invalid-optimization-business-hours', `${study.name}に閉店時刻が開店時刻以下となる候補があります。`, `${studyPath}.variables`))
+    }
+
+    for (const [constraintIndex, constraint] of study.constraints.entries()) {
+      const constraintPath = `${studyPath}.constraints.${constraintIndex}`
+      if (!optimizationConstraintMetrics.has(constraint.metric) || !Number.isFinite(constraint.value) || (constraint.operator !== '<=' && constraint.operator !== '>=')) {
+        issues.push(issue('error', 'invalid-optimization-constraint', `${study.name}に不正なConstraintがあります。`, constraintPath))
+      }
+    }
+    if (new Set(study.constraints.map((constraint) => constraint.id)).size !== study.constraints.length) {
+      issues.push(issue('error', 'duplicate-optimization-constraint-id', `${study.name}のConstraint IDが重複しています。`, `${studyPath}.constraints`))
+    }
+    const candidateCount = calculateOptimizationCandidateCount(study.variables)
+    if (candidateCount > study.hardCandidateLimit || candidateCount > 50_000) {
+      issues.push(issue('error', 'optimization-hard-limit-exceeded', `${study.name}の総候補数${candidateCount.toLocaleString('ja-JP')}件がhard limitを超えています。`, studyPath))
+    } else if (candidateCount > study.maxCandidates) {
+      issues.push(issue('error', 'optimization-study-limit-exceeded', `${study.name}の総候補数${candidateCount.toLocaleString('ja-JP')}件がStudy上限を超えています。`, studyPath))
+    } else if (candidateCount >= OPTIMIZATION_WARNING_CANDIDATES) {
+      issues.push(issue('warning', 'many-optimization-candidates', `${study.name}は${candidateCount.toLocaleString('ja-JP')}候補を評価します。探索範囲を確認してください。`, studyPath))
+    }
+    if (study.isReferenceStudy) issues.push(issue('warning', 'reference-optimization-study', `${study.name}は初期参考Studyです。実店舗の制約・候補範囲へ更新してください。`, studyPath))
+  }
+  if (new Set(settings.optimizationStudies.map((study) => study.id)).size !== settings.optimizationStudies.length) {
+    issues.push(issue('error', 'duplicate-optimization-study-id', 'Optimization StudyのIDが重複しています。', 'optimizationStudies'))
+  }
 
   if (settings.resources.some((resource) => resource.isReferencePrice)
     || settings.utilities.water.isReferencePrice

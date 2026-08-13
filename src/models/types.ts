@@ -31,6 +31,11 @@ export type ArrivalDistribution = 'uniform' | 'poisson'
 export type SeatingCategory = 'counter' | 'table'
 export type DurationDistribution = 'fixed' | 'uniform'
 export type PartyState = 'waiting' | 'seated' | 'ordered' | 'served' | 'departed' | 'abandoned'
+export type OptimizationEvaluationMode = 'deterministic' | 'monteCarlo'
+export type OptimizationVariableType = 'staffShiftHeadcount' | 'equipmentCapacity' | 'seatingUnitCount' | 'openingTime' | 'closingTime' | 'kitchenOperationDuration'
+export type OptimizationObjective = 'maximizeMeanOperatingProfit' | 'maximizeP10OperatingProfit' | 'minimizeAverageWait' | 'minimizeLaborCost' | 'maximizeRealizedSales'
+export type OptimizationConstraintMetric = 'laborCost' | 'meanOperatingProfit' | 'p10OperatingProfit' | 'averageKitchenWait' | 'p90KitchenWait' | 'abandonmentRate' | 'realizedSales' | 'serviceLevel' | 'staffCount' | 'totalSeats' | 'afterClosingMinutes'
+export type OptimizationConstraintOperator = '<=' | '>='
 
 export interface Resource {
   id: string
@@ -301,6 +306,8 @@ export interface ScenarioOverrides {
   equipmentCapacityOverrides?: Record<string, number>
   kitchenOperationDurationOverrides?: Record<string, number>
   seatingUnitCountOverrides?: Record<string, number>
+  kitchenOpeningTime?: string
+  kitchenClosingTime?: string
 }
 
 export interface Scenario {
@@ -319,6 +326,7 @@ export interface Equipment {
   concurrentJobs: number
   enabled: boolean
   isReferenceCapacity?: boolean
+  upgradeCostPerCapacityUnit?: number
 }
 
 export interface EquipmentRequirement {
@@ -434,6 +442,107 @@ export interface StochasticDemandSettings {
   isReferenceDemand: boolean
 }
 
+export interface OptimizationVariable {
+  id: string
+  name: string
+  type: OptimizationVariableType
+  targetId?: string
+  values: Array<number | string>
+  min?: number
+  max?: number
+  step?: number
+  adjustmentCosts?: Record<string, number>
+}
+
+export interface OptimizationConstraint {
+  id: string
+  metric: OptimizationConstraintMetric
+  operator: OptimizationConstraintOperator
+  value: number
+}
+
+export interface OptimizationConstraintViolation {
+  constraintId: string
+  metric: OptimizationConstraintMetric
+  operator: OptimizationConstraintOperator
+  limit: number
+  actual: number
+  amount: number
+  normalizedAmount: number
+}
+
+export interface OptimizationCandidateMetrics {
+  meanOperatingProfit: number
+  p10OperatingProfit: number
+  realizedSales: number
+  abandonmentRate: number
+  averageKitchenWait: number
+  p90KitchenWait: number
+  laborCost: number
+  staffCount: number
+  totalSeats: number
+  serviceLevel: number
+  afterClosingMinutes: number
+}
+
+export interface OptimizationBoundaryVariable {
+  variableId: string
+  edge: 'min' | 'max'
+}
+
+export interface OptimizationCandidateResult {
+  id: string
+  candidateIndex: number
+  values: Record<string, number | string>
+  overrides: ScenarioOverrides
+  feasible: boolean
+  constraintViolations: OptimizationConstraintViolation[]
+  violationScore: number
+  objectiveValue: number
+  metrics: OptimizationCandidateMetrics
+  investmentCost: number
+  paybackOperatingDays: number | null
+  boundaryVariables: OptimizationBoundaryVariable[]
+  pareto: boolean
+  warnings: string[]
+}
+
+export interface OptimizationStudySavedResult {
+  evaluatedAt: string
+  candidateCount: number
+  feasibleCount: number
+  baseMetrics: OptimizationCandidateMetrics
+  topCandidates: OptimizationCandidateResult[]
+  paretoCandidates: OptimizationCandidateResult[]
+}
+
+export interface OptimizationStudy {
+  id: string
+  name: string
+  evaluationMode: OptimizationEvaluationMode
+  variables: OptimizationVariable[]
+  constraints: OptimizationConstraint[]
+  objective: OptimizationObjective
+  monteCarloRuns: number
+  baseSeed: number
+  maxCandidates: number
+  hardCandidateLimit: number
+  isReferenceStudy?: boolean
+  result?: OptimizationStudySavedResult
+}
+
+export interface OptimizationRunResult {
+  studyId: string
+  candidateCount: number
+  feasibleCount: number
+  baseMetrics: OptimizationCandidateMetrics
+  candidates: OptimizationCandidateResult[]
+  rankedCandidates: OptimizationCandidateResult[]
+  paretoCandidates: OptimizationCandidateResult[]
+  evaluationSeeds: number[]
+  warnings: string[]
+}
+
 export interface CapacitySettings {
   demandMode: DemandMode
   equipment: Equipment[]
@@ -467,6 +576,7 @@ export interface AppSettings {
   actualPeriods: ActualPeriod[]
   scenarios: Scenario[]
   capacity: CapacitySettings
+  optimizationStudies: OptimizationStudy[]
 }
 
 export interface CostBreakdown {

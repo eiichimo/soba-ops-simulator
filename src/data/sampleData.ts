@@ -1,6 +1,7 @@
 import type { AppSettings, Resource, SourceRef, Unit } from '../models/types'
 import { todayLocalDate } from '../calculations/calendar'
 import { createSampleCapacitySettings } from './capacityDefaults'
+import { createSampleOptimizationStudy } from './optimizationDefaults'
 
 const resource = (
   id: string,
@@ -36,7 +37,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 6,
+  schemaVersion: 7,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
@@ -265,6 +266,7 @@ export const createSampleSettings = (): AppSettings => ({
   actualPeriods: [],
   scenarios: [],
   capacity: createSampleCapacitySettings(),
+  optimizationStudies: [createSampleOptimizationStudy()],
 })
 
 export const sampleSettings = createSampleSettings()
