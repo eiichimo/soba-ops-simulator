@@ -1,6 +1,7 @@
 import { createVolumeSeries, simulate } from '../calculations/engine'
 import type { AppSettings, PeriodKey, SimulationResult } from '../models/types'
 import { formatCompactYen, formatNumber, formatPercent, formatYen } from '../utils/format'
+import { validateSettings } from '../validation/settingsValidation'
 import { Badge, Icon, PageTitle, Panel } from './ui'
 import { VolumeChart } from './VolumeChart'
 
@@ -40,8 +41,8 @@ export const ResultsTable = ({ result }: { result: SimulationResult }) => {
   const rows = [
     ['原材料費', result.costs.directIngredients],
     ['仕込み材料費', result.costs.prepMaterials],
-    ['仕込み人件費', result.costs.prepLabor],
-    ['営業人件費', result.costs.operatingLabor],
+    ['追加仕込み人件費', result.costs.prepLabor],
+    ['シフト人件費', result.costs.operatingLabor],
     ['水道費', result.costs.water],
     ['ガス費', result.costs.gas],
     ['電気代', result.costs.electricity],
@@ -55,14 +56,41 @@ export const ResultsTable = ({ result }: { result: SimulationResult }) => {
     <div className="result-total"><span>総コスト</span><strong>{formatYen(result.totalCost)}</strong></div>
     <div><span>粗利益</span><strong>{formatYen(result.grossProfit)}</strong></div>
     <div className="result-profit"><span>営業利益</span><strong>{formatYen(result.operatingProfit)}</strong></div>
+    <div className="result-allocation"><span>仕込み作業配賦額（非加算）</span><strong>{formatYen(result.labor.prepLaborAllocation)}</strong></div>
+    <div className="result-allocation"><span>限界人件費（意思決定）</span><strong>{formatYen(result.labor.marginalPrepLaborCost)}</strong></div>
   </div>
 }
+
+const CalculationDetails = ({ result }: { result: SimulationResult }) => <details className="calculation-details">
+  <summary><span><Icon name="recipe" size={18}/>計算詳細・検算内訳</span><small>Resource → Process → Consumption の根拠を表示</small></summary>
+  <div className="calculation-details-body">
+    <div className="detail-summary-grid">
+      <div><span>販売食数</span><strong>{formatNumber(result.details.meals, 1)}食</strong></div>
+      <div><span>営業日数</span><strong>{result.operatingDays}日</strong></div>
+      <div><span>総営業時間</span><strong>{formatNumber(result.totalOperatingHours, 1)}時間</strong></div>
+      <div><span>暦日数</span><strong>{result.calendarDays}日</strong></div>
+    </div>
+    <div className="detail-columns">
+      <section><h3>メニュー別販売・売上</h3><div className="detail-table">{result.details.menus.map((menu) => <div key={menu.id}><span>{menu.name}</span><b>{formatNumber(menu.servings, 1)}食</b><strong>{formatYen(menu.revenue)}</strong></div>)}</div></section>
+      <section><h3>Resource別使用量・使用原価</h3><div className="detail-table">{result.details.resources.map((resource) => <div key={resource.id}><span>{resource.name}</span><b>{formatNumber(resource.quantity, 3)} {resource.unit}</b><strong>{formatYen(resource.usageCost)}</strong></div>)}</div></section>
+    </div>
+    <section><h3>Process別バッチ・作業</h3><div className="detail-table process-detail-table">{result.details.processes.map((process) => <div key={process.id}><span>{process.name}</span><b>{formatNumber(process.batches, 1)} batch</b><b>材料 {formatYen(process.materialCost)}</b><b>{formatNumber(process.activeLaborMinutes / 60, 2)}時間</b><strong>配賦 {formatYen(process.laborAllocation)} / 追加 {formatYen(process.additionalLaborCost)}</strong></div>)}</div></section>
+    <section><h3>水道光熱・揚げ油使用量</h3><div className="detail-utility-grid">
+      <div><span>水道</span><b>{formatNumber(result.details.utilities.water.quantity, 2)} L</b><strong>{formatYen(result.details.utilities.water.usageCost)}</strong></div>
+      <div><span>ガス</span><b>{formatNumber(result.details.utilities.gas.quantity, 3)} m³</b><strong>{formatYen(result.details.utilities.gas.usageCost)}</strong></div>
+      <div><span>電力</span><b>{formatNumber(result.details.utilities.electricity.quantity, 2)} kWh</b><strong>{formatYen(result.details.utilities.electricity.usageCost)}</strong></div>
+      <div><span>揚げ油</span><b>{formatNumber(result.details.fryingOilLiters, 2)} L</b><strong>{formatYen(result.details.fryingOilCost)}</strong></div>
+    </div></section>
+  </div>
+</details>
 
 export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppSettings; period: PeriodKey; onPeriodChange: (period: PeriodKey) => void }) => {
   const result = simulate(settings, period)
   const day = simulate(settings, 'day')
   const breakEven = createVolumeSeries(settings).find((item) => item.profit >= 0)?.meals
-  const ratioValid = Math.abs(result.menuRatioTotal - 100) < 0.01
+  const validationIssues = validateSettings(settings)
+  const validationErrors = validationIssues.filter((validationIssue) => validationIssue.severity === 'error')
+  const validationWarnings = validationIssues.filter((validationIssue) => validationIssue.severity === 'warning')
   const variableFood = result.costs.directIngredients + result.costs.prepMaterials + result.costs.fryingOil + result.costs.waste
 
   return <>
@@ -73,12 +101,15 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
       actions={<PeriodSwitch period={period} onChange={onPeriodChange} />}
     />
 
-    {!ratioValid && <div className="alert warning"><Icon name="info" size={18}/><span>有効なメニュー構成比の合計が {formatNumber(result.menuRatioTotal)}% です。100%に合わせると販売食数と集計が一致します。</span></div>}
+    {validationIssues.length > 0 && <details className={`validation-summary ${validationErrors.length ? 'has-errors' : ''}`} open={validationErrors.length > 0}>
+      <summary><Icon name="info" size={18}/><span>{validationErrors.length > 0 ? `計算設定に${validationErrors.length}件のErrorがあります。結果が不完全な可能性があります。` : `${validationWarnings.length}件のWarningがあります。`}</span><small>Error {validationErrors.length} / Warning {validationWarnings.length}</small></summary>
+      <div>{validationIssues.map((validationIssue, index) => <p className={validationIssue.severity} key={`${validationIssue.code}-${validationIssue.path}-${index}`}><Badge tone={validationIssue.severity === 'error' ? 'warning' : 'reference'}>{validationIssue.severity.toUpperCase()}</Badge><span>{validationIssue.message}</span></p>)}</div>
+    </details>}
 
     <div className="kpi-grid">
       <KpiCard label="売上" value={formatCompactYen(result.revenue)} note={`メニュー ${formatCompactYen(result.menuRevenue)} + 追加 ${formatCompactYen(result.toppingRevenue)}`} />
       <KpiCard label="総コスト" value={formatCompactYen(result.totalCost)} note={`売上比 ${formatPercent(result.revenue ? result.totalCost / result.revenue : 0)}`} />
-      <KpiCard label="営業利益" value={formatCompactYen(result.operatingProfit)} note={`${formatNumber(result.operatingDays, 0)}営業日 · ${formatNumber(result.meals, 0)}食`} tone="accent" />
+      <KpiCard label="営業利益" value={formatCompactYen(result.operatingProfit)} note={`${formatNumber(result.operatingDays, 0)}営業日 · ${formatNumber(result.meals, 0)}食${validationErrors.length ? ' · 要確認' : ''}`} tone="accent" />
       <KpiCard label="営業利益率" value={formatPercent(result.operatingMargin)} note={`原価率 ${formatPercent(result.foodCostRate)}`} tone="dark" />
       <KpiCard label="1食平均原価" value={formatYen(result.averageCostPerMeal)} note={`限界原価 ${formatYen(result.marginalCostPerMeal)}`} />
       <KpiCard label="1時間あたり利益" value={formatYen(result.profitPerOperatingHour)} note={`1営業日 ${formatYen(result.profitPerOperatingDay)}`} />
@@ -94,8 +125,8 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
         <p>現在は1日 <b>{formatNumber(settings.business.mealsPerDay, 0)}食</b> の想定で、営業利益は <b className={day.operatingProfit >= 0 ? 'positive' : 'negative'}>{formatYen(day.operatingProfit)}</b> です。</p>
         <dl className="mini-stats">
           <div><dt>食材・油・廃棄</dt><dd>{formatYen(variableFood / Math.max(1, result.meals))}<small>/ 食</small></dd></div>
-          <div><dt>月固定費</dt><dd>{formatCompactYen(result.costs.fixedMonthly / Math.max(result.calendarMonths, 1 / settings.business.operatingDaysPerMonth))}</dd></div>
-          <div><dt>営業時間</dt><dd>{formatNumber(settings.business.hoursPerDay)}<small>時間 / 日</small></dd></div>
+          <div><dt>固定費 / 暦月相当</dt><dd>{formatCompactYen(result.costs.fixedMonthly / Math.max(result.calendarMonths, 1 / 31))}</dd></div>
+          <div><dt>期間総営業時間</dt><dd>{formatNumber(result.totalOperatingHours)}<small>時間</small></dd></div>
         </dl>
       </Panel>
     </div>
@@ -113,6 +144,7 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
         <ResultsTable result={result} />
       </Panel>
     </div>
+    <CalculationDetails result={result} />
     <div className="calculation-note"><Badge tone="reference">初期参考値</Badge><span>水道・ガス・電気・油・食材価格は概算です。実際の請求書・仕入明細に合わせて各設定画面で変更してください。</span></div>
   </>
 }
