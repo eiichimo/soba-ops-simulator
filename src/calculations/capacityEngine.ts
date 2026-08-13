@@ -64,7 +64,7 @@ interface ResourceAllocation {
 
 const minuteOfDay = (value: string) => timeToMinutes(value) ?? 0
 
-const capacityBusinessDay = (settings: AppSettings) => {
+export const getCapacityBusinessDay = (settings: AppSettings) => {
   const start = parseLocalDate(settings.business.simulationStartDate) ?? new Date()
   for (let offset = 0; offset < 7; offset += 1) {
     const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset)
@@ -133,7 +133,7 @@ const balancedMenuSequence = (settings: AppSettings, total: number) => {
 }
 
 export const createDeterministicOrders = (settings: AppSettings): CapacityOrder[] => {
-  const { schedule } = capacityBusinessDay(settings)
+  const { schedule } = getCapacityBusinessDay(settings)
   const openingMinute = minuteOfDay(schedule.openingTime)
   const closingMinute = minuteOfDay(schedule.closingTime)
   const arrivals: number[] = []
@@ -250,7 +250,7 @@ const allocateResources = (
 }
 
 const nextOpenDate = (settings: AppSettings) => {
-  return capacityBusinessDay(settings).date
+  return getCapacityBusinessDay(settings).date
 }
 
 const capacityStaffCost = (settings: AppSettings) => settings.capacity.staffShifts.reduce((total, shift) => {
@@ -296,8 +296,12 @@ const createTimeBuckets = (
   return buckets
 }
 
-export const simulateCapacity = (settings: AppSettings, suppliedOrders?: CapacityOrder[]): CapacitySimulationResult => {
-  const { schedule } = capacityBusinessDay(settings)
+export const simulateCapacity = (
+  settings: AppSettings,
+  suppliedOrders?: CapacityOrder[],
+  options: { includeEconomic?: boolean } = {},
+): CapacitySimulationResult => {
+  const { schedule } = getCapacityBusinessDay(settings)
   const openingMinute = minuteOfDay(schedule.openingTime)
   const closingMinute = minuteOfDay(schedule.closingTime)
   const completeAfterClosing = settings.capacity.fulfillmentPolicy === 'completeAfterClosing'
@@ -495,14 +499,16 @@ export const simulateCapacity = (settings: AppSettings, suppliedOrders?: Capacit
     ...(completedResults.length > 0 && targetExceededCount / completedResults.length >= 0.2 ? [`許容待ち時間を超えた注文が${targetExceededCount}件あります。工程・設備・Shiftを確認してください。`] : []),
   ]
 
+  const staffShiftCost = capacityStaffCost(settings)
+  const includeEconomic = options.includeEconomic ?? true
   const economicSettings: AppSettings = {
     ...settings,
     business: { ...settings.business, simulationStartDate: nextOpenDate(settings) },
   }
-  const demandEconomic = simulate(economicSettings, 'day', orders.length)
-  const feasibleEconomic = simulate(economicSettings, 'day', completedOrders)
-  const staffShiftCost = capacityStaffCost(settings)
-  const laborAdjustment = staffShiftCost - demandEconomic.labor.shiftLaborCost
+  const demandEconomic = includeEconomic ? simulate(economicSettings, 'day', orders.length) : undefined
+  const feasibleEconomic = includeEconomic ? simulate(economicSettings, 'day', completedOrders) : undefined
+  const legacyShiftCost = demandEconomic?.labor.shiftLaborCost ?? 0
+  const laborAdjustment = staffShiftCost - legacyShiftCost
 
   return {
     openingTime: schedule.openingTime,
@@ -537,12 +543,12 @@ export const simulateCapacity = (settings: AppSettings, suppliedOrders?: Capacit
     economic: {
       demandMeals: orders.length,
       fulfilledMeals: completedOrders,
-      demandRevenue: demandEconomic.revenue,
-      feasibleRevenue: feasibleEconomic.revenue,
-      demandOperatingProfit: demandEconomic.operatingProfit - laborAdjustment,
-      capacityAdjustedOperatingProfit: feasibleEconomic.operatingProfit - laborAdjustment,
+      demandRevenue: demandEconomic?.revenue ?? 0,
+      feasibleRevenue: feasibleEconomic?.revenue ?? 0,
+      demandOperatingProfit: demandEconomic ? demandEconomic.operatingProfit - laborAdjustment : 0,
+      capacityAdjustedOperatingProfit: feasibleEconomic ? feasibleEconomic.operatingProfit - laborAdjustment : 0,
       staffShiftCost,
-      legacyShiftCost: demandEconomic.labor.shiftLaborCost,
+      legacyShiftCost,
     },
     bottleneckEquipmentId: equipmentBottleneck?.id,
     bottleneckLaborRoleId: laborBottleneck?.id,

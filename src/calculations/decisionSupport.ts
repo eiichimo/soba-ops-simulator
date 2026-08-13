@@ -292,6 +292,13 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
         ...settings.capacity.demandProfile,
         timeSlots: demandSlotsForMeals(settings, mealsPerDay),
       },
+      stochasticDemand: {
+        ...settings.capacity.stochasticDemand,
+        seatingUnits: settings.capacity.stochasticDemand.seatingUnits.map((unit) => ({
+          ...unit,
+          count: overrides.seatingUnitCountOverrides?.[unit.id] ?? unit.count,
+        })),
+      },
     },
   }
   if (overrides.business?.hoursPerDay !== undefined) result = settingsWithHours(result, overrides.business.hoursPerDay)

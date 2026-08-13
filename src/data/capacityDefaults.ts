@@ -1,5 +1,6 @@
 import type { AppSettings, CapacitySettings, KitchenWorkflow } from '../models/types'
 import { timeToMinutes } from '../calculations/calendar'
+import { createDefaultStochasticDemand, createSampleStochasticDemand } from './demandDefaults'
 
 type CapacitySeedSettings = Pick<AppSettings, 'business' | 'labor' | 'menuItems'>
 
@@ -14,7 +15,13 @@ export const createDefaultCapacitySettings = (settings: CapacitySeedSettings): C
   const role = settings.labor[0]
   const equipmentId = 'default-service-station'
   const operationId = 'default-service-operation'
+  const demandProfile = {
+    id: 'default-demand',
+    name: '標準需要',
+    timeSlots: [{ id: 'default-demand-slot', startTime: settings.business.openingTime, endTime: settings.business.closingTime, meals: settings.business.mealsPerDay }],
+  }
   return {
+    demandMode: 'deterministic',
     equipment: [{
       id: equipmentId,
       name: '汎用調理台（移行初期値）',
@@ -50,14 +57,11 @@ export const createDefaultCapacitySettings = (settings: CapacitySeedSettings): C
       endTime: timeAfter(settings.business.openingTime, laborRole.hoursPerDay, settings.business.closingTime),
       headcount: laborRole.headcount,
     })),
-    demandProfile: {
-      id: 'default-demand',
-      name: '標準需要',
-      timeSlots: [{ id: 'default-demand-slot', startTime: settings.business.openingTime, endTime: settings.business.closingTime, meals: settings.business.mealsPerDay }],
-    },
+    demandProfile,
     targetWaitMinutes: 10,
     fulfillmentPolicy: 'completeAfterClosing',
     bucketMinutes: 30,
+    stochasticDemand: createDefaultStochasticDemand(settings.business, demandProfile),
   }
 }
 
@@ -88,7 +92,19 @@ export const createSampleCapacitySettings = (): CapacitySettings => {
       { id: 'shrimp-serve', operationId: 'serve-order', dependencies: ['shrimp-plate'] },
     ],
   })
+  const demandProfile = {
+    id: 'sample-demand',
+    name: '初期参考需要',
+    timeSlots: [
+      { id: 'demand-11', startTime: '11:00', endTime: '12:00', meals: 15 },
+      { id: 'demand-12', startTime: '12:00', endTime: '13:00', meals: 45 },
+      { id: 'demand-13', startTime: '13:00', endTime: '14:00', meals: 20 },
+      { id: 'demand-14', startTime: '14:00', endTime: '17:00', meals: 10 },
+      { id: 'demand-17', startTime: '17:00', endTime: '20:00', meals: 10 },
+    ],
+  }
   return {
+    demandMode: 'deterministic',
     equipment: [
       { id: 'soba-boiler', name: 'そば釜', category: 'sobaBoiler', capacity: 6, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: true },
       { id: 'rinse-station', name: '麺洗浄槽', category: 'washing', capacity: 3, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: true },
@@ -126,19 +142,13 @@ export const createSampleCapacitySettings = (): CapacitySettings => {
       { id: 'shift-cook', name: '調理 標準Shift', laborRoleId: 'cook', startTime: '11:00', endTime: '20:00', headcount: 2 },
       { id: 'shift-hall', name: 'ホール 標準Shift', laborRoleId: 'hall', startTime: '11:00', endTime: '20:00', headcount: 1 },
     ],
-    demandProfile: {
-      id: 'sample-demand',
-      name: '初期参考需要',
-      timeSlots: [
-        { id: 'demand-11', startTime: '11:00', endTime: '12:00', meals: 15 },
-        { id: 'demand-12', startTime: '12:00', endTime: '13:00', meals: 45 },
-        { id: 'demand-13', startTime: '13:00', endTime: '14:00', meals: 20 },
-        { id: 'demand-14', startTime: '14:00', endTime: '17:00', meals: 10 },
-        { id: 'demand-17', startTime: '17:00', endTime: '20:00', meals: 10 },
-      ],
-    },
+    demandProfile,
     targetWaitMinutes: 10,
     fulfillmentPolicy: 'completeAfterClosing',
     bucketMinutes: 30,
+    stochasticDemand: createSampleStochasticDemand({
+      storeName: '', mealsPerDay: 100, openingTime: '11:00', closingTime: '20:00', hoursPerDay: 9,
+      operatingDaysPerMonth: 22, simulationStartDate: '', weekdays: [],
+    }, demandProfile),
   }
 }

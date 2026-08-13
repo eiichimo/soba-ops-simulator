@@ -8,7 +8,8 @@ import { Badge, Button, NumberField, PageTitle, Panel, SelectField, TextField, T
 
 type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void }
 
-const uniqueId = (prefix: string) => `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
+let idSequence = 0
+const uniqueId = (prefix: string) => `${prefix}-${Date.now()}-${idSequence += 1}`
 const valueNumber = (value: string) => Number.isFinite(Number(value)) ? Number(value) : 0
 
 const QueueChart = ({ settings }: { settings: AppSettings }) => {
