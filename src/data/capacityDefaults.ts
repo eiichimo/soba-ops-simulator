@@ -106,7 +106,7 @@ export const createSampleCapacitySettings = (): CapacitySettings => {
   return {
     demandMode: 'deterministic',
     equipment: [
-      { id: 'soba-boiler', name: 'そば釜', category: 'sobaBoiler', capacity: 6, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: true },
+      { id: 'soba-boiler', name: 'そば釜', category: 'sobaBoiler', capacity: 6, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: true, upgradeCostPerCapacityUnit: 50_000 },
       { id: 'rinse-station', name: '麺洗浄槽', category: 'washing', capacity: 3, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: true },
       { id: 'plating-station', name: '盛付台', category: 'plating', capacity: 1, capacityUnit: '食', concurrentJobs: 2, enabled: true, isReferenceCapacity: true },
       { id: 'fryer', name: 'フライヤー', category: 'fryer', capacity: 8, capacityUnit: '本', concurrentJobs: 1, enabled: true, isReferenceCapacity: true },

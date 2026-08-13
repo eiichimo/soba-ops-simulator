@@ -118,6 +118,7 @@ describe('settings validation', () => {
     const settings = createBenchmarkStore()
     settings.capacity.equipment[0].capacity = 0
     settings.capacity.equipment[0].concurrentJobs = 0
+    settings.capacity.equipment[0].upgradeCostPerCapacityUnit = -1
     settings.capacity.operations[0].durationMinutes = 0
     settings.capacity.operations[0].activeLaborMinutes = -1
     settings.capacity.operations[0].batchCapacity = 0
@@ -129,6 +130,7 @@ describe('settings validation', () => {
     expect(codes).toEqual(expect.arrayContaining([
       'invalid-equipment-capacity',
       'invalid-equipment-concurrency',
+      'negative-equipment-upgrade-cost',
       'invalid-kitchen-duration',
       'invalid-active-labor-minutes',
       'invalid-kitchen-batch-capacity',
@@ -204,5 +206,57 @@ describe('settings validation', () => {
       'missing-scenario-seating-unit',
       'negative-scenario-seating-count',
     ]))
+  })
+
+  it('Phase 7の空候補・不正range・不存在targetをErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.optimizationStudies[0].variables = [{
+      id: 'invalid-variable', name: '不正設備', type: 'equipmentCapacity', targetId: 'missing', values: [], min: 10, max: 1, step: 0,
+    }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'optimization-min-greater-than-max',
+      'invalid-optimization-step',
+      'optimization-variable-empty',
+      'missing-optimization-target',
+    ]))
+  })
+
+  it('Phase 7のhard limit超過とMonte Carlo必須ObjectiveをErrorにする', () => {
+    const settings = createSampleSettings()
+    const study = settings.optimizationStudies[0]
+    study.objective = 'maximizeP10OperatingProfit'
+    study.evaluationMode = 'deterministic'
+    study.hardCandidateLimit = 2
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'optimization-objective-requires-monte-carlo',
+      'optimization-hard-limit-exceeded',
+    ]))
+  })
+
+  it('Phase 7の負数Staff・0 Equipment候補と不正ConstraintをErrorにする', () => {
+    const settings = createSampleSettings()
+    const study = settings.optimizationStudies[0]
+    study.variables = [
+      { id: 'staff', name: 'Staff', type: 'staffShiftHeadcount', targetId: settings.capacity.staffShifts[0].id, values: [-1] },
+      { id: 'equipment', name: 'Equipment', type: 'equipmentCapacity', targetId: settings.capacity.equipment[0].id, values: [0] },
+    ]
+    study.constraints = [{ id: 'invalid', metric: 'laborCost', operator: '<=', value: Number.NaN }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'negative-optimization-candidate',
+      'invalid-optimization-candidate',
+      'invalid-optimization-constraint',
+    ]))
+  })
+
+  it('Phase 7の不正な営業時間候補をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.optimizationStudies[0].variables = [
+      { id: 'opening', name: '開店', type: 'openingTime', values: ['20:00'] },
+      { id: 'closing', name: '閉店', type: 'closingTime', values: ['19:00'] },
+    ]
+    expect(validateSettings(settings)).toContainEqual(expect.objectContaining({ severity: 'error', code: 'invalid-optimization-business-hours' }))
   })
 })
