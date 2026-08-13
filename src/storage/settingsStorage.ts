@@ -3,7 +3,7 @@ import { todayLocalDate } from '../calculations/calendar'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 3
+export const CURRENT_SCHEMA_VERSION = 4
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -15,6 +15,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && Array.isArray(candidate.menuItems)
     && Array.isArray(candidate.labor)
     && !!candidate.utilities
+    && (candidate.schemaVersion < 4 || (Array.isArray(candidate.actualPeriods) && Array.isArray(candidate.scenarios)))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -58,10 +59,18 @@ export const migrateV2ToV3 = (settings: AppSettings): AppSettings => {
   }
 }
 
+export const migrateV3ToV4 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 4,
+  actualPeriods: settings.actualPeriods ?? [],
+  scenarios: settings.scenarios ?? [],
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
   if (migrated.schemaVersion === 2) migrated = migrateV2ToV3(migrated)
+  if (migrated.schemaVersion === 3) migrated = migrateV3ToV4(migrated)
   return migrated
 }
 

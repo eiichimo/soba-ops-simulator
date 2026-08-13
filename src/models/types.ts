@@ -21,6 +21,9 @@ export type LaborCostTreatment = 'withinScheduledShift' | 'additionalLabor'
 export type LaborCostMode = 'accounting' | 'decision'
 export type ValidationSeverity = 'error' | 'warning'
 export type InventoryLotSource = 'purchase' | 'processOutput' | 'openingInventory' | 'byProduct' | 'carryOver'
+export type VarianceDirection = 'benefit' | 'cost' | 'neutral'
+export type VarianceInterpretation = 'favorable' | 'unfavorable' | 'neutral' | 'notAvailable'
+export type SensitivityTarget = 'mealsPerDay' | 'averageSellingPrice' | 'laborWage' | 'resourcePrice' | 'waterPrice' | 'gasPrice' | 'electricityPrice' | 'operatingHours' | 'operatingDays'
 
 export interface Resource {
   id: string
@@ -221,6 +224,80 @@ export interface MakeBuyComparison {
   unit: Unit
 }
 
+export interface ActualMenuSales {
+  menuItemId: string
+  quantity: number
+}
+
+export interface ActualResourceRecord {
+  resourceId: string
+  purchasedQuantity?: number
+  purchaseUnit: Unit
+  purchaseExpenditure?: number
+  usedQuantity?: number
+  usageUnit?: Unit
+  wasteQuantity?: number
+  wasteUnit?: Unit
+  wasteCost?: number
+}
+
+export interface ActualUtilityRecord {
+  cost?: number
+  quantity?: number
+}
+
+export interface ActualValues {
+  revenue?: number
+  meals?: number
+  menuSales: ActualMenuSales[]
+  usageCost?: number
+  purchaseExpenditure?: number
+  resourceRecords: ActualResourceRecord[]
+  openingInventoryValue?: number
+  endingInventoryValue?: number
+  wasteCost?: number
+  laborCost?: number
+  laborHours?: number
+  utilities: {
+    water: ActualUtilityRecord
+    gas: ActualUtilityRecord
+    electricity: ActualUtilityRecord
+  }
+  otherCost?: number
+  operatingDays?: number
+  operatingHours?: number
+  operatingProfit?: number
+  simpleCashFlow?: number
+}
+
+export interface ActualPeriod {
+  id: string
+  name: string
+  startDate: string
+  endDate: string
+  actuals: ActualValues
+  notes?: string
+}
+
+export interface ScenarioOverrides {
+  business?: {
+    mealsPerDay?: number
+    hoursPerDay?: number
+    operatingDaysPerWeek?: number
+  }
+  averageSellingPriceMultiplier?: number
+  laborWageMultiplier?: number
+  resourcePurchasePriceMultipliers?: Record<string, number>
+  utilityUnitPriceMultipliers?: Partial<Record<'water' | 'gas' | 'electricity', number>>
+}
+
+export interface Scenario {
+  id: string
+  name: string
+  overrides: ScenarioOverrides
+  notes?: string
+}
+
 export interface AppSettings {
   schemaVersion: number
   business: BusinessSettings
@@ -238,6 +315,8 @@ export interface AppSettings {
   otherCosts: OtherCost[]
   makeBuyComparison: MakeBuyComparison
   inventory: InventorySettings
+  actualPeriods: ActualPeriod[]
+  scenarios: Scenario[]
 }
 
 export interface CostBreakdown {
@@ -398,7 +477,7 @@ export interface ValidationIssue {
 }
 
 export interface SimulationResult {
-  period: PeriodKey
+  period: PeriodKey | 'custom'
   startDate: string
   endDateExclusive: string
   calendarDays: number
@@ -446,4 +525,51 @@ export interface MakeBuyResult {
   blendedWasteCost: number
   homemadeEndingInventoryValue: number
   purchasedEndingInventoryValue: number
+}
+
+export interface VarianceResult {
+  plan: number
+  actual: number | null
+  amount: number | null
+  rate: number | null
+  direction: VarianceDirection
+  interpretation: VarianceInterpretation
+}
+
+export interface VarianceRow extends VarianceResult {
+  key: string
+  label: string
+  unit: 'yen' | 'count' | 'hours'
+}
+
+export interface ResourceVariance {
+  resourceId: string
+  resourceName: string
+  unit: Unit
+  plannedUsageQuantity: number
+  actualUsageQuantity: number | null
+  plannedPurchaseQuantity: number
+  actualPurchaseQuantity: number | null
+  plannedPurchaseExpenditure: number
+  actualPurchaseExpenditure: number | null
+  plannedUnitPrice: number | null
+  actualUnitPrice: number | null
+  unitPriceDifference: number | null
+  purchaseQuantityDifference: number | null
+  plannedWasteQuantity: number
+  actualWasteQuantity: number | null
+  wasteQuantityDifference: number | null
+}
+
+export interface SensitivityPoint {
+  rate: number
+  label: string
+  parameterValue: number
+  result: SimulationResult
+}
+
+export interface ScenarioComparison {
+  scenario: Scenario
+  settings: AppSettings
+  result: SimulationResult
 }

@@ -35,7 +35,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 3,
+  schemaVersion: 4,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
@@ -261,6 +261,8 @@ export const createSampleSettings = (): AppSettings => ({
     entries: [],
     openingLots: [],
   },
+  actualPeriods: [],
+  scenarios: [],
 })
 
 export const sampleSettings = createSampleSettings()

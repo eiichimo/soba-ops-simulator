@@ -1,7 +1,7 @@
 import type { AppSettings } from '../../models/types'
 
 export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSettings => ({
-  schemaVersion: 3,
+  schemaVersion: 4,
   business: {
     storeName: '検算用基準店舗',
     mealsPerDay: 100,
@@ -92,4 +92,6 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
     entries: [],
     openingLots: [],
   },
+  actualPeriods: [],
+  scenarios: [],
 })

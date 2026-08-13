@@ -1,6 +1,6 @@
 # SobaOps
 
-SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 3では、Phase 2の検算可能な損益計算を維持しながら、日次FIFO在庫とpackage単位の仕入を追加しました。
+SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 4では、Phase 3のFIFO在庫・購入支出モデルを維持しながら、予測と実績の差異、感度分析、複数Scenarioを同じ計算エンジンで比較できるようにしました。
 
 単なる「1食原価」ではなく、固定費が販売量によってどう薄まるか、内製と既製品のどちらが有利か、営業時間や営業日数の変更が利益へどう影響するかを同じモデルから確認できます。初回起動時から、7種類の蕎麦メニューと原材料・仕込み工程を含むサンプル店舗が表示されます。
 
@@ -56,7 +56,12 @@ Viteの `base` はリポジトリPages用の `/soba-ops-simulator/` です。将
 - 売上、各費用、粗利益、営業利益、原価率、利益率、平均原価、限界原価の表示
 - 10〜200食における営業利益・1食平均原価グラフ
 - 内製・混合・既製品の会計上 / 意思決定上の単位原価、月間費用、内製ROI、概算損益分岐食数の比較
-- 現在条件（A）と比較案（B）の月間営業シナリオ比較
+- 任意期間のActual登録と、未入力を0扱いしない予測 / 実績Variance
+- Resource別の予測使用、実績使用、予測 / 実績購入、購入単価、廃棄差の確認
+- 実績水道・ガス・電気料金と使用量からの平均請求単価算出
+- 9種類の対象を-20%〜+20%で比較するSensitivity Analysisと利益グラフ
+- 既存Simulation Engineの逐次実行による販売食数の損益分岐探索
+- Baseを変更しないOverride形式のScenarioを最大5件保存・比較
 - g / kg、ml / Lの自動換算と、不正な単位・参照・工程循環などのValidation
 - メニュー、Resource、Process、水道光熱、揚げ油まで追跡できる折りたたみ式の計算詳細
 - Inventory Lotを営業日・休業日を通して持ち越す日次状態遷移
@@ -82,6 +87,8 @@ Resource → Process → Output → Inventory → Consumption
 - `InventoryLot`: ResourceまたはOutput、数量・単位、取得日、期限、取得時単価、原価構成、取得元を保持します。取得元は購入、期首在庫、内製Output、副産物、持越しを区別できます。
 - `InventorySettings`: シミュレーション開始時の期首Lotを保持します。旧 `InventoryEntry` はJSON後方互換のため残していますが、新規計算はLotを使用します。
 - `Consumption`: メニュー、トッピング、次工程から、ResourceまたはOutputを数量付きで参照します。
+- `ActualPeriod`: 開始日・終了日と、任意入力の売上、食数、仕入、在庫、人件費、水道光熱、廃棄、Resource別実績を保持します。Simulation設定とは独立しており、自動補正には使用しません。
+- `Scenario`: Base Settingsに対する食数、営業時間、営業日数、販売価格、時給、Resource価格、水道光熱単価の差分Overrideを保持します。
 
 たとえば店舗用かえしは「内製かえし 2 L + 既製かえし 1 L → 店舗用かえし 3 L」という通常のProcessです。画面上でInput数量を変えれば、特殊なかえし専用ロジックを使わず混合比率が変わります。
 
@@ -209,6 +216,33 @@ Phase 3の新規サンプルは揚げ油設定を18L / 6,840円のResourceへ接
 
 営業利益は販売へ払い出した在庫の使用原価、簡易現金収支は購入日のpackage支出を使います。購入品が期末在庫として残る場合、この二つは一致しません。
 
+### ActualとVariance
+
+Actualは「設定から計算した予測」とは別の観測データです。実績期間の開始日から終了日までを既存Simulation Engineで再計算し、入力済み項目だけについて次を算出します。
+
+Phase 4ではPhase 3の営業利益、使用原価、購入支出、在庫価額の定義を変更していません。ActualとVarianceはそれらの予測指標へ独立した実績値を並べる比較レイヤーです。
+
+```text
+差額 = 実績 - 予測
+差率 = (実績 - 予測) ÷ 予測
+```
+
+予測0の場合の差率は算出不可、Actual未入力は未入力のままとし、0円として補完しません。売上・営業利益のプラス差は好転、費用・廃棄のプラス差は悪化として方向を判定します。差率が20%以上の主要項目には、単価、営業時間、使用量、購入packageなどの「確認候補」をルールベースで表示します。これは原因の断定やAI推奨ではありません。
+
+Actual使用原価を直接入力しない場合、期首在庫価額、購入支出、期末在庫価額、廃棄原価がすべて入力されているときだけ、`期首 + 購入 - 期末 - 廃棄` から販売使用原価を算出します。実績営業利益と簡易現金収支も、必要項目がすべて揃った場合だけ算出します。Resourceの購入量は実使用量へ転用しません。
+
+水道・ガス・電気は `実績料金 ÷ 実績使用量` で平均請求単価を表示します。Simulation設定の単価と並べますが、Actual入力による自動上書きは行いません。
+
+### Sensitivityと損益分岐
+
+Sensitivityは1日販売食数、平均販売価格、時給、選択Resource購入価格、水道・ガス・電気単価、営業時間、週営業日数を対象に、`-20% / -10% / 基準 / +10% / +20%` の設定コピーを作り、既存Simulation Engineへ渡します。売上、使用原価、人件費、営業利益、利益率、簡易現金収支と営業利益グラフを表示します。独自の近似式は使用しません。
+
+販売食数の損益分岐は0〜500食/日を小さい順に再シミュレーションし、営業利益が初めて0以上になる食数を返します。FIFO、保存期限、バッチ、購入packageによる階段状・非単調な費用を線形化しないため、二分探索ではなく逐次探索を採用しています。
+
+### Scenario
+
+ScenarioはBase Settings全体のコピーではなく、変更した条件だけをOverrideとして保存します。比較時に新しい設定オブジェクトへ差分を適用し、Base、Actual、他のScenarioを変更しません。最大5件について売上、使用原価、購入支出、人件費、廃棄、営業利益、利益率、簡易現金収支、1食平均原価、1営業時間あたり利益とBase差を比較できます。ScenarioとActualはlocalStorageおよびJSON Export / Importへ含まれます。
+
 ### 重要な設計判断
 
 1. トップレベルのメニュー需要はSource単位で集約してからバッチ化します。異なるメニューで同じ刻みねぎを使っても、メニューごとに別バッチを作る計算にはなりません。
@@ -218,6 +252,7 @@ Phase 3の新規サンプルは揚げ油設定を18L / 6,840円のResourceへ接
 5. メニュー構成比は自動正規化しません。100%以外の場合は警告し、入力値どおりの食数を計算します。これにより入力ミスを隠しません。
 6. 循環する工程参照や不正なSourceは編集途中に画面を停止させないため、その枝を未計上にします。ただしDashboardと工程画面にErrorを明示し、「計算結果が不完全な可能性」を表示します。
 7. `operatingDaysPerMonth`、トップレベルの開閉店時刻、旧 `InventoryEntry` は旧JSONとの互換性のため保持しています。営業日の期間集計は曜日別カレンダーが正、`hoursPerDay` は人件費比例調整の基準です。
+8. ActualはSimulation設定を上書きしません。ScenarioとSensitivityも新しい設定オブジェクトへ差分を適用し、Baseを破壊しません。
 
 ### Validationと計算詳細
 
@@ -234,8 +269,8 @@ UIでは「初期参考値」と表示し、すべて編集可能です。実際
 ## 保存とJSON
 
 - localStorage key: `sobaops.settings.v1`
-- current schema: `schemaVersion: 3`
-- v1 / v2のlocalStorageとExport JSONは読み込み時にv3へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。
+- current schema: `schemaVersion: 4`
+- v1〜v3のlocalStorageとExport JSONは読み込み時にv4へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。
 - 新規サンプルの仕込み工程は実態に合わせて `withinScheduledShift` です。そのためサンプルへリセットすると、v1サンプルのような仕込み人件費の二重加算は行いません。
 - localStorage keyは既存データを発見するため意図的に `sobaops.settings.v1` のままです。保存されるJSONのschemaVersionとは別です。
 - Import時に最低限の構造とschemaVersionを検証し、計算設定の詳細は画面上のValidationで確認できます。
@@ -245,7 +280,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 
 ## テスト
 
-[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
+[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
 
 - 歩留まりと実質単価
 - 1食分の原材料費
@@ -259,18 +294,24 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 不存在Source、Process循環のValidation
 - schemaVersion v1 → v2移行
 - schemaVersion v2 → v3移行
+- schemaVersion v3 → v4、およびv1 → v4連続移行
 - 揚げ油交換周期
 - 内製 vs 既製品比較とROI
 - FIFO、複数取得価格Lot、購入package、最低購入数
 - 内製バッチ余剰、副産物在庫、期限切れspoilage、休業日の期限進行
 - 使用原価・購入支出・簡易現金収支、30日在庫集計
 - Resource単位の数量・金額在庫方程式
+- Actual未入力、差額・差率、予測0、費用 / 収益方向のVariance
+- 実績平均光熱単価とResource購入 / 使用分離
+- 非破壊Scenario Override、削除、複数Scenario比較
+- 食数、時給、Resource価格、営業時間のSensitivity
+- 基準店舗、バッチ、購入packageを含む販売食数損益分岐
 
 ## ディレクトリ構成
 
 ```text
 src/
-  calculations/   # UI非依存の損益・在庫・購入・単位・営業カレンダーとテスト
+  calculations/   # UI非依存の損益・在庫・Actual差異・感度・Scenarioとテスト
   components/     # Dashboard、編集画面、グラフ、UI部品
   data/           # 初回サンプル店舗
   models/         # 中心データ型
@@ -289,5 +330,6 @@ src/
 - 厨房設備能力、同時作業、ピーク時間、待ち行列の最適化
 - 勤務シフトと工程作業の時間帯・担当者レベルでの割当
 - 詳細な未販売・期限切れ・作業ミス廃棄入力
-- 価格Low / Standard / Highを使った一括感度分析
-- 価格弾力性、税・減価償却、POS連携、クラウド同期
+- ActualのCSV / POS / 請求書 / 会計ソフトImport、実績から設定への確認付き適用
+- 任意の感度変化率、複数パラメータ同時感度、メニュー構成・内製比率感度
+- 価格弾力性、需要予測、天候補正、モンテカルロ、税・減価償却、クラウド同期

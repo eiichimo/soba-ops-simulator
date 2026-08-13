@@ -2,12 +2,14 @@ import { useEffect, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { ComparisonEditor, DataManager, LaborEditor, MenuEditor, OperationsEditor, ProcessesEditor, ResourcesEditor, UtilitiesEditor } from './components/Editors'
 import { InventoryEditor } from './components/InventoryEditor'
+import { ActualsEditor } from './components/ActualsEditor'
+import { DecisionSupportEditor } from './components/DecisionSupportEditor'
 import { Icon, type IconName } from './components/ui'
 import { createSampleSettings } from './data/sampleData'
 import type { AppSettings, PeriodKey } from './models/types'
 import { loadSettings, parseSettingsJson, saveSettings } from './storage/settingsStorage'
 
-type PageKey = 'dashboard' | 'operations' | 'menus' | 'resources' | 'processes' | 'inventory' | 'labor' | 'utilities' | 'comparison' | 'data'
+type PageKey = 'dashboard' | 'operations' | 'menus' | 'resources' | 'processes' | 'inventory' | 'actuals' | 'analysis' | 'labor' | 'utilities' | 'comparison' | 'data'
 
 const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[] = [
   { id: 'dashboard', label: 'ダッシュボード', caption: '主要KPI', icon: 'dashboard' },
@@ -16,9 +18,11 @@ const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[
   { id: 'resources', label: '原材料', caption: '仕入・歩留まり', icon: 'box' },
   { id: 'processes', label: '仕込み / レシピ', caption: 'Input → Output', icon: 'recipe' },
   { id: 'inventory', label: '在庫・仕入', caption: 'FIFO・購入支出', icon: 'box' },
+  { id: 'actuals', label: '実績', caption: '予測 vs 実績', icon: 'data' },
+  { id: 'analysis', label: '感度・Scenario', caption: '意思決定支援', icon: 'trend' },
   { id: 'labor', label: '人件費', caption: '役割・実作業', icon: 'labor' },
   { id: 'utilities', label: '光熱費・設備', caption: '水道・ガス・電気・油', icon: 'utility' },
-  { id: 'comparison', label: '内製 vs 既製品', caption: 'ROI・シナリオ', icon: 'compare' },
+  { id: 'comparison', label: '内製 vs 既製品', caption: 'ROI・内製判断', icon: 'compare' },
   { id: 'data', label: 'データ管理', caption: '保存・JSON', icon: 'data' },
 ]
 
@@ -72,6 +76,8 @@ export default function App() {
       case 'resources': return <ResourcesEditor {...common} />
       case 'processes': return <ProcessesEditor {...common} />
       case 'inventory': return <InventoryEditor {...common} />
+      case 'actuals': return <ActualsEditor {...common} />
+      case 'analysis': return <DecisionSupportEditor {...common} />
       case 'labor': return <LaborEditor {...common} />
       case 'utilities': return <UtilitiesEditor {...common} />
       case 'comparison': return <ComparisonEditor {...common} />
@@ -103,7 +109,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps Phase 3</span><span>簡易現金収支は正式な会計CFではありません。実際の仕入・請求・勤務実績と照合してください。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 4</span><span>ActualはSimulation設定を自動変更しません。予測差異を実績・請求・勤務記録と照合してください。</span></footer>
     </div>
   </div>
 }
