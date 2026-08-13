@@ -1,4 +1,4 @@
-import { parseLocalDate, scheduleHours, timeToMinutes } from '../calculations/calendar'
+import { getScheduleForDate, parseLocalDate, scheduleHours, timeToMinutes } from '../calculations/calendar'
 import { areUnitsCompatible } from '../calculations/units'
 import type { AppSettings, SourceRef, ValidationIssue } from '../models/types'
 
@@ -99,6 +99,102 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     }
   }
 
+  const equipment = new Map(settings.capacity.equipment.map((item) => [item.id, item]))
+  const kitchenOperations = new Map(settings.capacity.operations.map((operation) => [operation.id, operation]))
+  const laborRoles = new Set(settings.labor.map((role) => role.id))
+  const capacityStartDate = parseLocalDate(settings.business.simulationStartDate)
+  let capacitySchedule = capacityStartDate ? getScheduleForDate(settings, capacityStartDate) : undefined
+  if (capacityStartDate && !capacitySchedule?.enabled) {
+    for (let offset = 1; offset < 7; offset += 1) {
+      const date = new Date(capacityStartDate.getFullYear(), capacityStartDate.getMonth(), capacityStartDate.getDate() + offset)
+      const candidate = getScheduleForDate(settings, date)
+      if (candidate?.enabled) { capacitySchedule = candidate; break }
+    }
+  }
+  const businessOpening = timeToMinutes(capacitySchedule?.openingTime ?? settings.business.openingTime)
+  const businessClosing = timeToMinutes(capacitySchedule?.closingTime ?? settings.business.closingTime)
+  if (settings.capacity.targetWaitMinutes < 0) issues.push(issue('error', 'invalid-target-wait', '許容待ち時間は0分以上にしてください。', 'capacity.targetWaitMinutes'))
+  if (settings.capacity.bucketMinutes <= 0) issues.push(issue('error', 'invalid-capacity-bucket', 'Peak集計幅は0分より大きくしてください。', 'capacity.bucketMinutes'))
+
+  for (const [index, item] of settings.capacity.equipment.entries()) {
+    const path = `capacity.equipment.${index}`
+    if (item.capacity <= 0) issues.push(issue('error', 'invalid-equipment-capacity', `${item.name}の同時処理容量は0より大きくしてください。`, path))
+    if (item.concurrentJobs <= 0) issues.push(issue('error', 'invalid-equipment-concurrency', `${item.name}の同時Job数は1以上にしてください。`, path))
+  }
+
+  for (const [index, operation] of settings.capacity.operations.entries()) {
+    const path = `capacity.operations.${index}`
+    if (operation.durationMinutes <= 0) issues.push(issue('error', 'invalid-kitchen-duration', `${operation.name}の所要時間は0より大きくしてください。`, path))
+    if (operation.activeLaborMinutes < 0 || operation.activeLaborMinutes > operation.durationMinutes) {
+      issues.push(issue('error', 'invalid-active-labor-minutes', `${operation.name}の人員占有時間は0以上かつ所要時間以下にしてください。`, path))
+    }
+    if (operation.batchCapacity <= 0) issues.push(issue('error', 'invalid-kitchen-batch-capacity', `${operation.name}のバッチ容量は0より大きくしてください。`, path))
+    for (const [requirementIndex, requirement] of operation.equipmentRequirements.entries()) {
+      const requirementPath = `${path}.equipmentRequirements.${requirementIndex}`
+      if (!equipment.has(requirement.equipmentId)) issues.push(issue('error', 'missing-kitchen-equipment', `${operation.name}が参照する設備「${requirement.equipmentId}」が見つかりません。`, requirementPath))
+      if (requirement.occupationMinutes <= 0 || requirement.units <= 0) issues.push(issue('error', 'invalid-equipment-requirement', `${operation.name}の設備占有時間・必要台数は0より大きくしてください。`, requirementPath))
+    }
+    for (const [requirementIndex, requirement] of operation.laborRequirements.entries()) {
+      const requirementPath = `${path}.laborRequirements.${requirementIndex}`
+      if (requirement.headcount < 0) issues.push(issue('error', 'negative-kitchen-headcount', `${operation.name}の必要人数は0以上にしてください。`, requirementPath))
+      if (requirement.laborRoleIds.length === 0 || requirement.laborRoleIds.some((roleId) => !laborRoles.has(roleId))) {
+        issues.push(issue('error', 'missing-kitchen-labor-role', `${operation.name}が参照する担当Roleが見つかりません。`, requirementPath))
+      } else if (!requirement.laborRoleIds.some((roleId) => settings.capacity.staffShifts.some((shift) => shift.laborRoleId === roleId && shift.headcount > 0))) {
+        issues.push(issue('warning', 'missing-kitchen-staff-shift', `${operation.name}を担当できるStaffShiftがありません。`, requirementPath))
+      }
+    }
+  }
+
+  for (const [index, shift] of settings.capacity.staffShifts.entries()) {
+    const path = `capacity.staffShifts.${index}`
+    const start = timeToMinutes(shift.startTime)
+    const end = timeToMinutes(shift.endTime)
+    if (!laborRoles.has(shift.laborRoleId)) issues.push(issue('error', 'missing-shift-labor-role', `${shift.name}の担当Roleが見つかりません。`, path))
+    if (shift.headcount < 0) issues.push(issue('error', 'negative-shift-headcount', `${shift.name}の人数は0以上にしてください。`, path))
+    if (start === null || end === null || end <= start) issues.push(issue('error', 'invalid-staff-shift-time', `${shift.name}の終了時刻は開始時刻より後にしてください。`, path))
+    else if (businessOpening !== null && businessClosing !== null && (start < businessOpening || end > businessClosing)) {
+      issues.push(issue('error', 'staff-shift-outside-business-hours', `${shift.name}は営業時間内に設定してください。`, path))
+    }
+  }
+
+  for (const [workflowIndex, workflow] of settings.capacity.workflows.entries()) {
+    const path = `capacity.workflows.${workflowIndex}`
+    const nodes = new Map(workflow.nodes.map((node) => [node.id, node]))
+    if (!settings.menuItems.some((menu) => menu.id === workflow.menuItemId)) issues.push(issue('error', 'missing-workflow-menu', `${workflow.name}の対象メニューが見つかりません。`, path))
+    for (const [nodeIndex, node] of workflow.nodes.entries()) {
+      const nodePath = `${path}.nodes.${nodeIndex}`
+      if (!kitchenOperations.has(node.operationId)) issues.push(issue('error', 'missing-workflow-operation', `${workflow.name}が参照する厨房工程「${node.operationId}」が見つかりません。`, nodePath))
+      if (node.dependencies.some((dependency) => !nodes.has(dependency))) issues.push(issue('error', 'missing-workflow-dependency', `${workflow.name}に存在しない前工程参照があります。`, nodePath))
+    }
+    const nodeState = new Map<string, 'visiting' | 'visited'>()
+    let hasCycle = false
+    const visitNode = (nodeId: string) => {
+      if (nodeState.get(nodeId) === 'visiting') { hasCycle = true; return }
+      if (nodeState.get(nodeId) === 'visited') return
+      nodeState.set(nodeId, 'visiting')
+      for (const dependency of nodes.get(nodeId)?.dependencies ?? []) visitNode(dependency)
+      nodeState.set(nodeId, 'visited')
+    }
+    workflow.nodes.forEach((node) => visitNode(node.id))
+    if (hasCycle) issues.push(issue('error', 'kitchen-workflow-cycle', `${workflow.name}の厨房Workflowが循環参照しています。`, path))
+  }
+
+  for (const [index, menu] of settings.menuItems.entries()) {
+    if (menu.enabled && (!menu.kitchenWorkflowId || !settings.capacity.workflows.some((workflow) => workflow.id === menu.kitchenWorkflowId))) {
+      issues.push(issue('error', 'missing-menu-workflow', `${menu.name}の厨房Workflowが見つかりません。`, `menuItems.${index}.kitchenWorkflowId`))
+    }
+  }
+
+  const demandTotal = settings.capacity.demandProfile.timeSlots.reduce((total, slot) => total + Math.max(0, slot.meals), 0)
+  if (Math.abs(demandTotal - settings.business.mealsPerDay) > 0.01) {
+    issues.push(issue('warning', 'demand-profile-total-mismatch', `時間帯別需要は合計${demandTotal}食で、1日販売食数${settings.business.mealsPerDay}食と一致しません。`, 'capacity.demandProfile'))
+  }
+  for (const [index, slot] of settings.capacity.demandProfile.timeSlots.entries()) {
+    const start = timeToMinutes(slot.startTime)
+    const end = timeToMinutes(slot.endTime)
+    if (slot.meals < 0 || start === null || end === null || end <= start) issues.push(issue('error', 'invalid-demand-slot', '需要時間帯と食数を正しく設定してください。', `capacity.demandProfile.timeSlots.${index}`))
+  }
+
   const processGraph = new Map<string, string[]>()
   for (const process of settings.processes) {
     processGraph.set(process.id, process.inputs
@@ -187,6 +283,18 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     for (const resourceId of Object.keys(scenario.overrides.resourcePurchasePriceMultipliers ?? {})) {
       if (!resources.has(resourceId)) issues.push(issue('error', 'missing-scenario-resource', `${scenario.name}の対象Resource「${resourceId}」が見つかりません。`, path))
     }
+    for (const [shiftId, headcount] of Object.entries(scenario.overrides.staffShiftHeadcountOverrides ?? {})) {
+      if (!settings.capacity.staffShifts.some((shift) => shift.id === shiftId)) issues.push(issue('error', 'missing-scenario-shift', `${scenario.name}のStaffShift「${shiftId}」が見つかりません。`, path))
+      if (headcount < 0) issues.push(issue('error', 'negative-scenario-shift-headcount', `${scenario.name}のStaffShift人数は0以上にしてください。`, path))
+    }
+    for (const [equipmentId, capacity] of Object.entries(scenario.overrides.equipmentCapacityOverrides ?? {})) {
+      if (!equipment.has(equipmentId)) issues.push(issue('error', 'missing-scenario-equipment', `${scenario.name}の設備「${equipmentId}」が見つかりません。`, path))
+      if (capacity <= 0) issues.push(issue('error', 'invalid-scenario-equipment-capacity', `${scenario.name}の設備容量は0より大きくしてください。`, path))
+    }
+    for (const [operationId, duration] of Object.entries(scenario.overrides.kitchenOperationDurationOverrides ?? {})) {
+      if (!kitchenOperations.has(operationId)) issues.push(issue('error', 'missing-scenario-kitchen-operation', `${scenario.name}の厨房工程「${operationId}」が見つかりません。`, path))
+      if (duration <= 0) issues.push(issue('error', 'invalid-scenario-kitchen-duration', `${scenario.name}の工程時間は0より大きくしてください。`, path))
+    }
   }
   if (settings.scenarios.length > 5) issues.push(issue('warning', 'too-many-scenarios', '比較表示は先頭5件のScenarioまでです。', 'scenarios'))
 
@@ -196,6 +304,10 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     || settings.utilities.electricity.isReferencePrice
     || settings.fryingOil.isReferencePrice) {
     issues.push(issue('warning', 'reference-prices', '初期参考価格が残っています。実際の仕入・請求価格へ更新してください。'))
+  }
+  if (settings.capacity.equipment.some((item) => item.isReferenceCapacity)
+    || settings.capacity.operations.some((operation) => operation.isReferenceCapacity)) {
+    issues.push(issue('warning', 'reference-capacity', '厨房能力に初期参考値が残っています。実際の設備・作業時間へ更新してください。'))
   }
 
   return issues

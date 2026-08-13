@@ -121,6 +121,15 @@ export const DecisionSupportEditor = ({ settings, onChange }: Props) => {
         const resourceEntry = Object.entries(scenario.overrides.resourcePurchasePriceMultipliers ?? {})[0]
         const selectedResourceId = resourceEntry?.[0] ?? settings.resources[0]?.id ?? ''
         const selectedResourceMultiplier = resourceEntry?.[1] ?? 1
+        const shiftEntry = Object.entries(scenario.overrides.staffShiftHeadcountOverrides ?? {})[0]
+        const selectedShiftId = shiftEntry?.[0] ?? settings.capacity.staffShifts[0]?.id ?? ''
+        const selectedShiftHeadcount = shiftEntry?.[1] ?? settings.capacity.staffShifts.find((shift) => shift.id === selectedShiftId)?.headcount ?? 0
+        const equipmentEntry = Object.entries(scenario.overrides.equipmentCapacityOverrides ?? {})[0]
+        const selectedEquipmentId = equipmentEntry?.[0] ?? settings.capacity.equipment[0]?.id ?? ''
+        const selectedEquipmentCapacity = equipmentEntry?.[1] ?? settings.capacity.equipment.find((equipment) => equipment.id === selectedEquipmentId)?.capacity ?? 0
+        const operationEntry = Object.entries(scenario.overrides.kitchenOperationDurationOverrides ?? {})[0]
+        const selectedOperationId = operationEntry?.[0] ?? settings.capacity.operations[0]?.id ?? ''
+        const selectedOperationDuration = operationEntry?.[1] ?? settings.capacity.operations.find((operation) => operation.id === selectedOperationId)?.durationMinutes ?? 0
         return <Panel key={scenario.id} className="scenario-editor-card" title={scenario.name} actions={<Button variant="danger" onClick={() => {
           if (window.confirm(`${scenario.name}を削除しますか？`)) onChange(removeScenario(settings, scenario.id))
         }}>削除</Button>}>
@@ -133,6 +142,12 @@ export const DecisionSupportEditor = ({ settings, onChange }: Props) => {
             <NumberField label="時給変化" suffix="%" value={percentValue(scenario.overrides.laborWageMultiplier)} onChange={(event) => updateOverrides(scenario, { laborWageMultiplier: percentMultiplier(event.target.value) })}/>
             <SelectField label="価格変更Resource" value={selectedResourceId} onChange={(event) => updateOverrides(scenario, { resourcePurchasePriceMultipliers: { [event.target.value]: selectedResourceMultiplier } })}>{settings.resources.map((resource) => <option key={resource.id} value={resource.id}>{resource.name}</option>)}</SelectField>
             <NumberField label="Resource価格変化" suffix="%" value={percentValue(selectedResourceMultiplier)} onChange={(event) => updateOverrides(scenario, { resourcePurchasePriceMultipliers: { [selectedResourceId]: percentMultiplier(event.target.value) } })}/>
+            <SelectField label="変更StaffShift" value={selectedShiftId} onChange={(event) => updateOverrides(scenario, { staffShiftHeadcountOverrides: { [event.target.value]: settings.capacity.staffShifts.find((shift) => shift.id === event.target.value)?.headcount ?? 0 } })}>{settings.capacity.staffShifts.map((shift) => <option key={shift.id} value={shift.id}>{shift.name}</option>)}</SelectField>
+            <NumberField label="Shift人数" suffix="人" min={0} value={selectedShiftHeadcount} onChange={(event) => updateOverrides(scenario, { staffShiftHeadcountOverrides: { [selectedShiftId]: numberValue(event.target.value) } })}/>
+            <SelectField label="変更Equipment" value={selectedEquipmentId} onChange={(event) => updateOverrides(scenario, { equipmentCapacityOverrides: { [event.target.value]: settings.capacity.equipment.find((equipment) => equipment.id === event.target.value)?.capacity ?? 1 } })}>{settings.capacity.equipment.map((equipment) => <option key={equipment.id} value={equipment.id}>{equipment.name}</option>)}</SelectField>
+            <NumberField label="設備容量" suffix="単位" min={0.01} value={selectedEquipmentCapacity} onChange={(event) => updateOverrides(scenario, { equipmentCapacityOverrides: { [selectedEquipmentId]: numberValue(event.target.value) } })}/>
+            <SelectField label="変更厨房工程" value={selectedOperationId} onChange={(event) => updateOverrides(scenario, { kitchenOperationDurationOverrides: { [event.target.value]: settings.capacity.operations.find((operation) => operation.id === event.target.value)?.durationMinutes ?? 1 } })}>{settings.capacity.operations.map((operation) => <option key={operation.id} value={operation.id}>{operation.name}</option>)}</SelectField>
+            <NumberField label="工程所要時間" suffix="分" min={0.01} value={selectedOperationDuration} onChange={(event) => updateOverrides(scenario, { kitchenOperationDurationOverrides: { [selectedOperationId]: numberValue(event.target.value) } })}/>
           </div>
         </Panel>
       })}

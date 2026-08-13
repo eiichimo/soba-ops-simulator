@@ -24,6 +24,8 @@ export type InventoryLotSource = 'purchase' | 'processOutput' | 'openingInventor
 export type VarianceDirection = 'benefit' | 'cost' | 'neutral'
 export type VarianceInterpretation = 'favorable' | 'unfavorable' | 'neutral' | 'notAvailable'
 export type SensitivityTarget = 'mealsPerDay' | 'averageSellingPrice' | 'laborWage' | 'resourcePrice' | 'waterPrice' | 'gasPrice' | 'electricityPrice' | 'operatingHours' | 'operatingDays'
+export type EquipmentCategory = 'sobaBoiler' | 'fryer' | 'stove' | 'burner' | 'dishwasher' | 'washing' | 'plating' | 'service' | 'other'
+export type FulfillmentPolicy = 'completeAfterClosing' | 'dropAtClosing'
 
 export interface Resource {
   id: string
@@ -84,6 +86,7 @@ export interface MenuItem {
   consumption: SourceRef[]
   expectedSalesRatio: number
   enabled: boolean
+  kitchenWorkflowId?: string
 }
 
 export interface Topping {
@@ -289,6 +292,9 @@ export interface ScenarioOverrides {
   laborWageMultiplier?: number
   resourcePurchasePriceMultipliers?: Record<string, number>
   utilityUnitPriceMultipliers?: Partial<Record<'water' | 'gas' | 'electricity', number>>
+  staffShiftHeadcountOverrides?: Record<string, number>
+  equipmentCapacityOverrides?: Record<string, number>
+  kitchenOperationDurationOverrides?: Record<string, number>
 }
 
 export interface Scenario {
@@ -296,6 +302,86 @@ export interface Scenario {
   name: string
   overrides: ScenarioOverrides
   notes?: string
+}
+
+export interface Equipment {
+  id: string
+  name: string
+  category: EquipmentCategory
+  capacity: number
+  capacityUnit: string
+  concurrentJobs: number
+  enabled: boolean
+  isReferenceCapacity?: boolean
+}
+
+export interface EquipmentRequirement {
+  equipmentId: string
+  occupationMinutes: number
+  units: number
+}
+
+export interface LaborRequirement {
+  laborRoleIds: string[]
+  headcount: number
+}
+
+export interface KitchenOperation {
+  id: string
+  name: string
+  durationMinutes: number
+  activeLaborMinutes: number
+  equipmentRequirements: EquipmentRequirement[]
+  laborRequirements: LaborRequirement[]
+  batchCapacity: number
+  enabled: boolean
+  isReferenceCapacity?: boolean
+}
+
+export interface KitchenWorkflowNode {
+  id: string
+  operationId: string
+  dependencies: string[]
+}
+
+export interface KitchenWorkflow {
+  id: string
+  name: string
+  menuItemId: string
+  nodes: KitchenWorkflowNode[]
+}
+
+export interface StaffShift {
+  id: string
+  name: string
+  laborRoleId: string
+  startTime: string
+  endTime: string
+  headcount: number
+}
+
+export interface DemandTimeSlot {
+  id: string
+  startTime: string
+  endTime: string
+  meals: number
+}
+
+export interface DemandProfile {
+  id: string
+  name: string
+  timeSlots: DemandTimeSlot[]
+}
+
+export interface CapacitySettings {
+  equipment: Equipment[]
+  operations: KitchenOperation[]
+  workflows: KitchenWorkflow[]
+  staffShifts: StaffShift[]
+  demandProfile: DemandProfile
+  targetWaitMinutes: number
+  fulfillmentPolicy: FulfillmentPolicy
+  bucketMinutes: number
 }
 
 export interface AppSettings {
@@ -317,6 +403,7 @@ export interface AppSettings {
   inventory: InventorySettings
   actualPeriods: ActualPeriod[]
   scenarios: Scenario[]
+  capacity: CapacitySettings
 }
 
 export interface CostBreakdown {
@@ -572,4 +659,101 @@ export interface ScenarioComparison {
   scenario: Scenario
   settings: AppSettings
   result: SimulationResult
+}
+
+export interface CapacityOrder {
+  id: string
+  arrivalMinute: number
+  arrivalTime: string
+  menuItemId: string
+  quantity: number
+}
+
+export interface OrderOperationResult {
+  nodeId: string
+  operationId: string
+  batchId: string
+  readyMinute: number
+  startMinute: number
+  completedMinute: number
+}
+
+export interface CapacityOrderResult extends CapacityOrder {
+  status: 'completed' | 'dropped'
+  completedMinute?: number
+  completedTime?: string
+  waitMinutes?: number
+  operations: OrderOperationResult[]
+}
+
+export interface CapacityUtilization {
+  id: string
+  name: string
+  busyMinutes: number
+  availableMinutes: number
+  utilization: number
+}
+
+export interface CapacityTimeBucket {
+  startMinute: number
+  endMinute: number
+  startTime: string
+  arrivals: number
+  completions: number
+  waitingOrders: number
+  averageWaitMinutes: number
+  maxQueueLength: number
+}
+
+export interface QueueTimelinePoint {
+  minute: number
+  time: string
+  queueLength: number
+}
+
+export interface CapacityEconomicSummary {
+  demandMeals: number
+  fulfilledMeals: number
+  demandRevenue: number
+  feasibleRevenue: number
+  demandOperatingProfit: number
+  capacityAdjustedOperatingProfit: number
+  staffShiftCost: number
+  legacyShiftCost: number
+}
+
+export interface CapacitySimulationResult {
+  openingTime: string
+  closingTime: string
+  openingMinute: number
+  closingMinute: number
+  totalOrders: number
+  completedOrders: number
+  completedWithinBusinessHours: number
+  ordersCompletedAfterClosing: number
+  droppedOrders: number
+  unfinishedAtClosing: number
+  averageWaitMinutes: number
+  medianWaitMinutes: number
+  p90WaitMinutes: number
+  maxWaitMinutes: number
+  withinTargetCount: number
+  withinTargetRate: number
+  targetExceededCount: number
+  maxQueueLength: number
+  maxQueueMinute: number
+  maxQueueTime: string
+  finalCompletionMinute: number
+  finalCompletionTime: string
+  maximumHourlyThroughput: number
+  completionRateWithinBusinessHours: number
+  equipmentUtilization: CapacityUtilization[]
+  laborUtilization: CapacityUtilization[]
+  timeBuckets: CapacityTimeBucket[]
+  queueTimeline: QueueTimelinePoint[]
+  orders: CapacityOrderResult[]
+  economic: CapacityEconomicSummary
+  bottleneckEquipmentId?: string
+  bottleneckLaborRoleId?: string
+  warnings: string[]
 }

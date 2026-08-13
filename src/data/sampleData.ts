@@ -1,5 +1,6 @@
 import type { AppSettings, Resource, SourceRef, Unit } from '../models/types'
 import { todayLocalDate } from '../calculations/calendar'
+import { createSampleCapacitySettings } from './capacityDefaults'
 
 const resource = (
   id: string,
@@ -35,7 +36,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 4,
+  schemaVersion: 5,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
@@ -181,7 +182,7 @@ export const createSampleSettings = (): AppSettings => ({
     { id: 'kitsune', name: 'きつねそば', sellingPrice: 880, expectedSalesRatio: 10, enabled: true, consumption: [input('resource', 'raw-soba', 180, 'g'), input('output', 'hot-tsuyu', 0.3, 'L'), input('output', 'chopped-onion', 5, 'g'), input('resource', 'aburaage', 1, '枚')] },
     { id: 'tororo-soba', name: 'とろろそば', sellingPrice: 980, expectedSalesRatio: 9, enabled: true, consumption: [input('resource', 'raw-soba', 180, 'g'), input('output', 'cold-tsuyu', 0.18, 'L'), input('output', 'chopped-onion', 6, 'g'), input('resource', 'tororo', 40, 'g'), input('resource', 'nori', 1, '食')] },
     { id: 'shrimp-tempura-soba', name: '海老天そば', sellingPrice: 1_180, expectedSalesRatio: 12, enabled: true, consumption: [input('resource', 'raw-soba', 180, 'g'), input('output', 'hot-tsuyu', 0.3, 'L'), input('output', 'chopped-onion', 5, 'g'), input('resource', 'prepared-shrimp-tempura', 1, '本')] },
-  ],
+  ].map((menu) => ({ ...menu, kitchenWorkflowId: `workflow-${menu.id}` })),
   toppings: [
     { id: 'large', name: '大盛', sellingPrice: 150, orderRate: 12, enabled: true, consumption: [input('resource', 'raw-soba', 90, 'g')] },
     { id: 'extra-egg', name: '生卵', sellingPrice: 100, orderRate: 5, enabled: true, consumption: [input('resource', 'egg', 1, '個')] },
@@ -263,6 +264,7 @@ export const createSampleSettings = (): AppSettings => ({
   },
   actualPeriods: [],
   scenarios: [],
+  capacity: createSampleCapacitySettings(),
 })
 
 export const sampleSettings = createSampleSettings()
