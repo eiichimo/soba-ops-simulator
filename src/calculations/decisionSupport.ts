@@ -190,6 +190,7 @@ const settingsWithHours = (settings: AppSettings, hours: number): AppSettings =>
   business: {
     ...settings.business,
     hoursPerDay: hours,
+    closingTime: timeForHours(settings.business.openingTime, hours),
     weekdays: settings.business.weekdays.map((schedule) => ({
       ...schedule,
       closingTime: timeForHours(schedule.openingTime, hours),
@@ -214,13 +215,33 @@ const settingsWithOperatingDays = (settings: AppSettings, operatingDaysPerWeek: 
   }
 }
 
+const demandSlotsForMeals = (settings: AppSettings, mealsPerDay: number) => {
+  const slots = settings.capacity.demandProfile.timeSlots
+  const total = slots.reduce((sum, slot) => sum + Math.max(0, slot.meals), 0)
+  const target = Math.max(0, Math.round(mealsPerDay))
+  if (slots.length === 0) return []
+  if (total <= 0) return slots.map((slot, index) => ({ ...slot, meals: index === 0 ? target : 0 }))
+  const rows = slots.map((slot, index) => {
+    const exact = target * Math.max(0, slot.meals) / total
+    return { slot, index, meals: Math.floor(exact), remainder: exact - Math.floor(exact) }
+  })
+  let remaining = target - rows.reduce((sum, row) => sum + row.meals, 0)
+  for (const row of [...rows].sort((a, b) => b.remainder - a.remainder || a.index - b.index)) {
+    if (remaining <= 0) break
+    row.meals += 1
+    remaining -= 1
+  }
+  return rows.map((row) => ({ ...row.slot, meals: row.meals }))
+}
+
 export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario): AppSettings => {
   const overrides = scenario.overrides
+  const mealsPerDay = overrides.business?.mealsPerDay ?? settings.business.mealsPerDay
   let result: AppSettings = {
     ...settings,
     business: {
       ...settings.business,
-      mealsPerDay: overrides.business?.mealsPerDay ?? settings.business.mealsPerDay,
+      mealsPerDay,
     },
     menuItems: settings.menuItems.map((menu) => ({
       ...menu,
@@ -242,6 +263,35 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
       water: { ...settings.utilities.water, unitPrice: settings.utilities.water.unitPrice * (overrides.utilityUnitPriceMultipliers?.water ?? 1) },
       gas: { ...settings.utilities.gas, unitPrice: settings.utilities.gas.unitPrice * (overrides.utilityUnitPriceMultipliers?.gas ?? 1) },
       electricity: { ...settings.utilities.electricity, unitPrice: settings.utilities.electricity.unitPrice * (overrides.utilityUnitPriceMultipliers?.electricity ?? 1) },
+    },
+    capacity: {
+      ...settings.capacity,
+      staffShifts: settings.capacity.staffShifts.map((shift) => ({
+        ...shift,
+        headcount: overrides.staffShiftHeadcountOverrides?.[shift.id] ?? shift.headcount,
+      })),
+      equipment: settings.capacity.equipment.map((equipment) => ({
+        ...equipment,
+        capacity: overrides.equipmentCapacityOverrides?.[equipment.id] ?? equipment.capacity,
+      })),
+      operations: settings.capacity.operations.map((operation) => {
+        const duration = overrides.kitchenOperationDurationOverrides?.[operation.id]
+        if (duration === undefined) return operation
+        const ratio = operation.durationMinutes > 0 ? duration / operation.durationMinutes : 1
+        return {
+          ...operation,
+          durationMinutes: duration,
+          activeLaborMinutes: Math.min(duration, operation.activeLaborMinutes * ratio),
+          equipmentRequirements: operation.equipmentRequirements.map((requirement) => ({
+            ...requirement,
+            occupationMinutes: requirement.occupationMinutes * ratio,
+          })),
+        }
+      }),
+      demandProfile: overrides.business?.mealsPerDay === undefined ? settings.capacity.demandProfile : {
+        ...settings.capacity.demandProfile,
+        timeSlots: demandSlotsForMeals(settings, mealsPerDay),
+      },
     },
   }
   if (overrides.business?.hoursPerDay !== undefined) result = settingsWithHours(result, overrides.business.hoursPerDay)

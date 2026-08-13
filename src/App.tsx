@@ -4,16 +4,18 @@ import { ComparisonEditor, DataManager, LaborEditor, MenuEditor, OperationsEdito
 import { InventoryEditor } from './components/InventoryEditor'
 import { ActualsEditor } from './components/ActualsEditor'
 import { DecisionSupportEditor } from './components/DecisionSupportEditor'
+import { CapacityEditor } from './components/CapacityEditor'
 import { Icon, type IconName } from './components/ui'
 import { createSampleSettings } from './data/sampleData'
 import type { AppSettings, PeriodKey } from './models/types'
 import { loadSettings, parseSettingsJson, saveSettings } from './storage/settingsStorage'
 
-type PageKey = 'dashboard' | 'operations' | 'menus' | 'resources' | 'processes' | 'inventory' | 'actuals' | 'analysis' | 'labor' | 'utilities' | 'comparison' | 'data'
+type PageKey = 'dashboard' | 'operations' | 'capacity' | 'menus' | 'resources' | 'processes' | 'inventory' | 'actuals' | 'analysis' | 'labor' | 'utilities' | 'comparison' | 'data'
 
 const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[] = [
   { id: 'dashboard', label: 'ダッシュボード', caption: '主要KPI', icon: 'dashboard' },
   { id: 'operations', label: '営業条件', caption: '食数・時間・日数', icon: 'store' },
+  { id: 'capacity', label: '厨房能力', caption: 'Queue・設備・人員', icon: 'capacity' },
   { id: 'menus', label: 'メニュー', caption: '価格・構成比', icon: 'menu' },
   { id: 'resources', label: '原材料', caption: '仕入・歩留まり', icon: 'box' },
   { id: 'processes', label: '仕込み / レシピ', caption: 'Input → Output', icon: 'recipe' },
@@ -72,6 +74,7 @@ export default function App() {
     const common = { settings, onChange: setSettings }
     switch (activePage) {
       case 'operations': return <OperationsEditor {...common} />
+      case 'capacity': return <CapacityEditor {...common} />
       case 'menus': return <MenuEditor {...common} />
       case 'resources': return <ResourcesEditor {...common} />
       case 'processes': return <ProcessesEditor {...common} />
@@ -109,7 +112,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps Phase 4</span><span>ActualはSimulation設定を自動変更しません。予測差異を実績・請求・勤務記録と照合してください。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 5</span><span>需要食数と提供可能食数を分離し、決定論的な厨房Queueを既存経済モデルと照合します。</span></footer>
     </div>
   </div>
 }

@@ -1,9 +1,10 @@
 import { createSampleSettings } from '../data/sampleData'
+import { createDefaultCapacitySettings } from '../data/capacityDefaults'
 import { todayLocalDate } from '../calculations/calendar'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 4
+export const CURRENT_SCHEMA_VERSION = 5
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -16,6 +17,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && Array.isArray(candidate.labor)
     && !!candidate.utilities
     && (candidate.schemaVersion < 4 || (Array.isArray(candidate.actualPeriods) && Array.isArray(candidate.scenarios)))
+    && (candidate.schemaVersion < 5 || !!candidate.capacity)
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -66,11 +68,25 @@ export const migrateV3ToV4 = (settings: AppSettings): AppSettings => ({
   scenarios: settings.scenarios ?? [],
 })
 
+export const migrateV4ToV5 = (settings: AppSettings): AppSettings => {
+  const capacity = createDefaultCapacitySettings(settings)
+  return {
+    ...settings,
+    schemaVersion: 5,
+    menuItems: settings.menuItems.map((menu) => ({
+      ...menu,
+      kitchenWorkflowId: menu.kitchenWorkflowId ?? `workflow-${menu.id}`,
+    })),
+    capacity,
+  }
+}
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
   if (migrated.schemaVersion === 2) migrated = migrateV2ToV3(migrated)
   if (migrated.schemaVersion === 3) migrated = migrateV3ToV4(migrated)
+  if (migrated.schemaVersion === 4) migrated = migrateV4ToV5(migrated)
   return migrated
 }
 

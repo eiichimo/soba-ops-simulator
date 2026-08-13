@@ -1,11 +1,12 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from 'react'
 
-export type IconName = 'dashboard' | 'store' | 'menu' | 'box' | 'recipe' | 'labor' | 'utility' | 'compare' | 'data' | 'trend' | 'info' | 'chevron'
+export type IconName = 'dashboard' | 'store' | 'capacity' | 'menu' | 'box' | 'recipe' | 'labor' | 'utility' | 'compare' | 'data' | 'trend' | 'info' | 'chevron'
 
 export const Icon = ({ name, size = 20 }: { name: IconName; size?: number }) => {
   const paths: Record<IconName, ReactNode> = {
     dashboard: <><rect x="3" y="3" width="7" height="7" rx="2"/><rect x="14" y="3" width="7" height="7" rx="2"/><rect x="3" y="14" width="7" height="7" rx="2"/><rect x="14" y="14" width="7" height="7" rx="2"/></>,
     store: <><path d="M4 10v10h16V10"/><path d="M3 10l2-6h14l2 6"/><path d="M8 20v-6h8v6"/><path d="M3 10c1.2 2 3.8 2 5 0 1.2 2 3.8 2 5 0 1.2 2 3.8 2 5 0 1.2 2 2.2 1 3 0"/></>,
+    capacity: <><path d="M4 19V9M10 19V5M16 19v-7M22 19H2"/><path d="M3 6l6-3 6 5 6-5"/></>,
     menu: <><path d="M7 3v18M17 3v18M7 7h10M7 12h10M7 17h10"/><circle cx="4" cy="7" r="1"/><circle cx="4" cy="12" r="1"/><circle cx="4" cy="17" r="1"/></>,
     box: <><path d="M4 7l8-4 8 4-8 4z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></>,
     recipe: <><circle cx="6" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="M9 6h4a5 5 0 015 5v4M15 18H9a3 3 0 01-3-3V9"/></>,

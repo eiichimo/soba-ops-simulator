@@ -99,10 +99,36 @@ export const MenuEditor = ({ settings, onChange }: EditorProps) => {
   const updateMenu = (index: number, patch: Partial<MenuItem>) => onChange({ ...settings, menuItems: settings.menuItems.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) })
   const updateTopping = (index: number, patch: Partial<Topping>) => onChange({ ...settings, toppings: settings.toppings.map((item, itemIndex) => itemIndex === index ? { ...item, ...patch } : item) })
   const ratio = settings.menuItems.filter((item) => item.enabled).reduce((sum, item) => sum + item.expectedSalesRatio, 0)
+  const addMenu = () => {
+    const menuId = uniqueId('menu')
+    const workflowId = `workflow-${menuId}`
+    const operation = settings.capacity.operations[0]
+    onChange({
+      ...settings,
+      menuItems: [...settings.menuItems, { id: menuId, name: '新しいメニュー', sellingPrice: 800, consumption: [], expectedSalesRatio: 0, enabled: true, kitchenWorkflowId: workflowId }],
+      capacity: {
+        ...settings.capacity,
+        workflows: [...settings.capacity.workflows, {
+          id: workflowId,
+          name: '新しいメニュー Workflow',
+          menuItemId: menuId,
+          nodes: operation ? [{ id: uniqueId('node'), operationId: operation.id, dependencies: [] }] : [],
+        }],
+      },
+    })
+  }
+  const deleteMenu = (index: number) => {
+    const menu = settings.menuItems[index]
+    onChange({
+      ...settings,
+      menuItems: settings.menuItems.filter((_, itemIndex) => itemIndex !== index),
+      capacity: { ...settings.capacity, workflows: settings.capacity.workflows.filter((workflow) => workflow.menuItemId !== menu.id) },
+    })
+  }
 
   return <>
     <PageTitle eyebrow="MENU MIX" title="メニューと販売構成" description="販売価格・構成比・1食あたり消費量を編集します。有効メニューの構成比は100%が基準です。" actions={<Badge tone={Math.abs(ratio - 100) < 0.01 ? 'positive' : 'warning'}>構成比 {formatNumber(ratio)}%</Badge>} />
-    <Panel title="主力メニュー" caption="仕込品も原材料と同じように1食の消費対象として参照できます。" actions={<Button onClick={() => onChange({ ...settings, menuItems: [...settings.menuItems, { id: uniqueId('menu'), name: '新しいメニュー', sellingPrice: 800, consumption: [], expectedSalesRatio: 0, enabled: true }] })}>＋ メニュー追加</Button>}>
+    <Panel title="主力メニュー" caption="仕込品も原材料と同じように1食の消費対象として参照できます。" actions={<Button onClick={addMenu}>＋ メニュー追加</Button>}>
       <div className="menu-list">
         {settings.menuItems.map((menu, index) => <details className="menu-card" key={menu.id} open={index < 3}>
           <summary>
@@ -114,11 +140,12 @@ export const MenuEditor = ({ settings, onChange }: EditorProps) => {
               <TextField label="メニュー名" value={menu.name} onChange={(event) => updateMenu(index, { name: event.target.value })} />
               <NumberField label="販売価格" suffix="円" min={0} value={menu.sellingPrice} onChange={(event) => updateMenu(index, { sellingPrice: numberValue(event.target.value) })} />
               <NumberField label="販売構成比" suffix="%" min={0} value={menu.expectedSalesRatio} onChange={(event) => updateMenu(index, { expectedSalesRatio: numberValue(event.target.value) })} />
+              <SelectField label="厨房Workflow" value={menu.kitchenWorkflowId ?? ''} onChange={(event) => updateMenu(index, { kitchenWorkflowId: event.target.value })}>{settings.capacity.workflows.filter((workflow) => workflow.menuItemId === menu.id).map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name}</option>)}</SelectField>
               <div className="field toggle-field"><span className="field-label">販売設定</span><Toggle label={menu.enabled ? '販売中' : '停止中'} checked={menu.enabled} onChange={(enabled) => updateMenu(index, { enabled })}/></div>
             </div>
             <div className="subsection-title"><span>1食あたりの消費</span><small>Resource / Output</small></div>
             <SourceEditor settings={settings} sources={menu.consumption} onChange={(consumption) => updateMenu(index, { consumption })}/>
-            <div className="card-footer-actions"><Button variant="danger" onClick={() => onChange({ ...settings, menuItems: settings.menuItems.filter((_, itemIndex) => itemIndex !== index) })}>このメニューを削除</Button></div>
+            <div className="card-footer-actions"><Button variant="danger" onClick={() => deleteMenu(index)}>このメニューを削除</Button></div>
           </div>
         </details>)}
       </div>
@@ -413,7 +440,7 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
     <PageTitle eyebrow="DATA & BACKUP" title="データ管理" description="設定はこのブラウザに自動保存されます。JSONでバックアップ・移行できます。" />
     {message && <div className={`alert ${message.type}`}><Icon name="info" size={18}/><span>{message.text}</span></div>}
     <div className="data-action-grid">
-      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績期間、Scenarioを1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
+      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績期間、Scenario、厨房能力を1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
       <article><span className="data-icon import"><Icon name="data" size={26}/></span><h2>Import JSON</h2><p>SobaOpsから書き出した設定を読み込みます。現在の設定は上書きされます。</p><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }}/><Button onClick={() => fileInput.current?.click()}>ファイルを選択</Button></article>
       <article><span className="data-icon reset"><Icon name="store" size={26}/></span><h2>サンプルへ戻す</h2><p>入力内容を破棄し、初回起動時のサンプル蕎麦店データを復元します。</p><Button variant="danger" onClick={onReset}>初期状態へリセット</Button></article>
     </div>
@@ -426,6 +453,9 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
         <div><span>Menu items</span><strong>{settings.menuItems.length}</strong></div>
         <div><span>Actual periods</span><strong>{settings.actualPeriods.length}</strong></div>
         <div><span>Scenarios</span><strong>{settings.scenarios.length}</strong></div>
+        <div><span>Equipment</span><strong>{settings.capacity.equipment.length}</strong></div>
+        <div><span>Kitchen operations</span><strong>{settings.capacity.operations.length}</strong></div>
+        <div><span>Workflows</span><strong>{settings.capacity.workflows.length}</strong></div>
       </div>
       <details className="json-preview"><summary>JSONプレビュー</summary><pre>{JSON.stringify(settings, null, 2)}</pre></details>
     </Panel>

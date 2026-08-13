@@ -1,6 +1,6 @@
 # SobaOps
 
-SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 4では、Phase 3のFIFO在庫・購入支出モデルを維持しながら、予測と実績の差異、感度分析、複数Scenarioを同じ計算エンジンで比較できるようにしました。
+SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 5では、Phase 4までの経済・在庫・Actual・Scenarioモデルを維持しながら、営業中のEquipment、KitchenOperation、注文Queue、ピーク負荷、StaffShiftを決定論的にシミュレーションできるようにしました。
 
 単なる「1食原価」ではなく、固定費が販売量によってどう薄まるか、内製と既製品のどちらが有利か、営業時間や営業日数の変更が利益へどう影響するかを同じモデルから確認できます。初回起動時から、7種類の蕎麦メニューと原材料・仕込み工程を含むサンプル店舗が表示されます。
 
@@ -62,6 +62,14 @@ Viteの `base` はリポジトリPages用の `/soba-ops-simulator/` です。将
 - 9種類の対象を-20%〜+20%で比較するSensitivity Analysisと利益グラフ
 - 既存Simulation Engineの逐次実行による販売食数の損益分岐探索
 - Baseを変更しないOverride形式のScenarioを最大5件保存・比較
+- 1分を基本単位とする決定論的な1日厨房シミュレーション
+- Equipment容量・同時Job、営業中KitchenOperation、Menu別DAG Workflowの編集
+- 時間帯別DemandProfile、FIFO注文Queue、工程バッチ、独立工程の並列処理
+- StaffShiftとactive Labor占有、Equipment占有を分けたスケジューリング
+- 平均・中央値・最大・90パーセンタイル待ち時間、許容時間以内提供率、最大Queue
+- 30分単位の到着・完了・待機、設備・Role利用率とボトルネック候補
+- `completeAfterClosing / dropAtClosing` と、需要売上・能力制約後売上／利益の分離
+- ScenarioによるShift人数・Equipment容量・KitchenOperation時間の非破壊比較
 - g / kg、ml / Lの自動換算と、不正な単位・参照・工程循環などのValidation
 - メニュー、Resource、Process、水道光熱、揚げ油まで追跡できる折りたたみ式の計算詳細
 - Inventory Lotを営業日・休業日を通して持ち越す日次状態遷移
@@ -89,6 +97,11 @@ Resource → Process → Output → Inventory → Consumption
 - `Consumption`: メニュー、トッピング、次工程から、ResourceまたはOutputを数量付きで参照します。
 - `ActualPeriod`: 開始日・終了日と、任意入力の売上、食数、仕入、在庫、人件費、水道光熱、廃棄、Resource別実績を保持します。Simulation設定とは独立しており、自動補正には使用しません。
 - `Scenario`: Base Settingsに対する食数、営業時間、営業日数、販売価格、時給、Resource価格、水道光熱単価の差分Overrideを保持します。
+- `Equipment`: そば釜、フライヤー、洗浄槽、盛付台など、営業中の処理能力を制約する設備です。1Jobの処理容量と同時Job数を分けます。
+- `KitchenOperation`: 営業中の1注文を処理する工程です。総所要時間、active人員時間、設備占有時間、必要Role、バッチ容量を持ちます。仕込み・Inventory Outputを作る既存`Process`とは別モデルです。
+- `KitchenWorkflow`: MenuItemに紐づくOperation NodeのDAGです。複数依存を持てるため、蕎麦茹でと天ぷらを並行し、両方の完了後に盛付できます。
+- `StaffShift`: LaborRole、開始・終了時刻、人数を持ちます。active作業中の1人を別工程へ同時割当しません。
+- `DemandProfile`: 時間帯ごとの決定論的な注文食数です。Menu Mixは既存の販売構成比を利用します。
 
 たとえば店舗用かえしは「内製かえし 2 L + 既製かえし 1 L → 店舗用かえし 3 L」という通常のProcessです。画面上でInput数量を変えれば、特殊なかえし専用ロジックを使わず混合比率が変わります。
 
@@ -243,6 +256,35 @@ Sensitivityは1日販売食数、平均販売価格、時給、選択Resource購
 
 ScenarioはBase Settings全体のコピーではなく、変更した条件だけをOverrideとして保存します。比較時に新しい設定オブジェクトへ差分を適用し、Base、Actual、他のScenarioを変更しません。最大5件について売上、使用原価、購入支出、人件費、廃棄、営業利益、利益率、簡易現金収支、1食平均原価、1営業時間あたり利益とBase差を比較できます。ScenarioとActualはlocalStorageおよびJSON Export / Importへ含まれます。
 
+### 厨房能力・Queue
+
+Capacity Engineは既存のEconomic / Inventory / Decision Support Engineへ巨大な時間軸ロジックを混在させず、[src/calculations/capacityEngine.ts](src/calculations/capacityEngine.ts) に分離しています。同じ設定から同じ結果を返し、乱数は使いません。シミュレーション開始日が休業日なら次の営業日を選び、その曜日の開閉店時刻を1日のCapacity境界に使います。
+
+時間帯内の注文は均等間隔で到着し、Menu Mixは最大剰余法で合計食数を一致させて決定論的に配分します。各注文はWorkflowの依存が完了するとOperationのFIFO待ち行列へ入り、設備・人員が空けば容量内で即座にバッチを開始します。異なる設備を使う独立Nodeは並行できます。
+
+```text
+KitchenOperation総時間      = 注文Nodeの完了までの時間
+activeLaborMinutes          = Staffを占有する時間
+equipmentOccupationMinutes  = Equipmentを占有する時間
+待ち時間                    = 最終提供時刻 - 注文到着時刻
+設備利用率                  = 設備実稼働時間 / (営業時間 × 同時Job数)
+人員利用率                  = active割当時間 / Shift総時間
+```
+
+待ち時間は平均、中央値、最大、nearest-rank方式の90パーセンタイルを表示します。Queue Lengthは「開始可能な工程を待っている注文数」で、実行中だけの注文は含めません。Peak Windowは初期30分単位です。利用率95%以上や許容待ち時間超過率20%以上は原因の断定ではなくボトルネック候補として表示します。1時間最大処理食数は開店時刻を基準にした固定60分Bucketの最大値です。
+
+`completeAfterClosing` は閉店前に受けた注文を閉店後も提供し、閉店まで勤務するShiftが処理を継続できる仮定です。`dropAtClosing` は閉店時に未完了の注文を失注扱いにします。閉店時刻と最終提供時刻は別表示します。残業割増や閉店後の追加固定費はまだ計算しません。
+
+### 需要売上と能力制約後利益
+
+- 需要食数: DemandProfileに入力された注文数です。
+- 提供可能食数: fulfillmentPolicyに従って完了した注文数です。
+- 需要ベース売上: 需要食数を既存Economic Engineへ渡した売上です。
+- 能力制約後売上: 提供可能食数を既存Economic Engineへ渡した売上です。
+- 能力制約後営業利益: 提供可能食数による日次Simulation結果を、Capacity StaffShift人件費との差で補正した近似値です。
+
+能力制約後の原価・在庫は、完了したMenuの時刻別実消費をInventory Engineへ逐次同期するのではなく、完了食数を既存Menu Mixの日次需要として再計算します。この日単位近似によりPhase 1〜4と同じ計算定義を再利用します。ScenarioはShift人数、Equipment容量、KitchenOperation時間もOverrideでき、追加人件費、追加提供可能食数、追加売上、営業利益差を同じCapacity Engineで比較します。
+
 ### 重要な設計判断
 
 1. トップレベルのメニュー需要はSource単位で集約してからバッチ化します。異なるメニューで同じ刻みねぎを使っても、メニューごとに別バッチを作る計算にはなりません。
@@ -253,10 +295,12 @@ ScenarioはBase Settings全体のコピーではなく、変更した条件だ�
 6. 循環する工程参照や不正なSourceは編集途中に画面を停止させないため、その枝を未計上にします。ただしDashboardと工程画面にErrorを明示し、「計算結果が不完全な可能性」を表示します。
 7. `operatingDaysPerMonth`、トップレベルの開閉店時刻、旧 `InventoryEntry` は旧JSONとの互換性のため保持しています。営業日の期間集計は曜日別カレンダーが正、`hoursPerDay` は人件費比例調整の基準です。
 8. ActualはSimulation設定を上書きしません。ScenarioとSensitivityも新しい設定オブジェクトへ差分を適用し、Baseを破壊しません。
+9. 既存`Process`は仕込み・内製Output・Inventoryを担当し、`KitchenOperation`は営業中の注文処理だけを担当します。
+10. 厨房能力は需要を上書きしません。需要ベースと提供可能ベースを並べ、能力制約後利益は既存Economic Engineを完了食数で再利用する日次近似です。
 
 ### Validationと計算詳細
 
-DashboardはErrorとWarningを分けて表示します。Errorは存在しないResource / Output / Lot参照、単位不整合、負の在庫、Process循環、0以下の購入package・最低購入数・バッチ・Output数量、不正な歩留まり・価格・営業時間・原価配賦率などです。Warningはメニュー構成比や原価配賦率の合計不一致、保存期限・期首取得日の未設定、初期参考価格、期間中の大量廃棄・過大な期末在庫などです。
+DashboardはErrorとWarningを分けて表示します。Errorは存在しないResource / Output / Lot参照、単位不整合、負の在庫、Process循環、0以下の購入package・最低購入数・バッチ・Output数量、不正な歩留まり・価格・営業時間・原価配賦率などです。Capacityではさらに、0以下のEquipment容量・工程時間・バッチ容量、不正なactive時間・設備占有、存在しないEquipment / LaborRole / Workflow依存、営業時間外StaffShift、負の人数、Workflow循環をErrorにします。WarningはDemandProfile合計不一致、必要Shiftなし、設備／工程の初期参考Capacity、利用率95%以上、許容待ち超過率などです。
 
 「計算詳細・検算内訳」では、従来のメニュー、Process、水道光熱に加え、Resource / Output別の期首、購入、内製、副産物、使用、廃棄、期末、使用原価、購入支出を確認できます。在庫・仕入画面では仕入履歴、廃棄理由、日次在庫推移、期末Lotを追跡できます。
 
@@ -266,11 +310,13 @@ DashboardはErrorとWarningを分けて表示します。Errorは存在しない
 
 UIでは「初期参考値」と表示し、すべて編集可能です。実際の経営判断では、請求書、仕入明細、勤務実績に置き換えてください。
 
+そば釜6食、茹で2.5分、フライヤー8本・3.5分、洗浄・盛付・提供時間、時間帯別需要も動作確認用の初期参考Capacityです。実設備の性能、作業観測、ピーク注文記録へ更新してください。
+
 ## 保存とJSON
 
 - localStorage key: `sobaops.settings.v1`
-- current schema: `schemaVersion: 4`
-- v1〜v3のlocalStorageとExport JSONは読み込み時にv4へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。
+- current schema: `schemaVersion: 5`
+- v1〜v4のlocalStorageとExport JSONは読み込み時にv5へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では既存Menuごとの標準Workflow、汎用調理台・標準提供工程、既存LaborRole由来のStaffShift、`mealsPerDay`と一致するDemandProfileを初期参考値として補います。
 - 新規サンプルの仕込み工程は実態に合わせて `withinScheduledShift` です。そのためサンプルへリセットすると、v1サンプルのような仕込み人件費の二重加算は行いません。
 - localStorage keyは既存データを発見するため意図的に `sobaops.settings.v1` のままです。保存されるJSONのschemaVersionとは別です。
 - Import時に最低限の構造とschemaVersionを検証し、計算設定の詳細は画面上のValidationで確認できます。
@@ -280,7 +326,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 
 ## テスト
 
-[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
+[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
 
 - 歩留まりと実質単価
 - 1食分の原材料費
@@ -294,7 +340,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 不存在Source、Process循環のValidation
 - schemaVersion v1 → v2移行
 - schemaVersion v2 → v3移行
-- schemaVersion v3 → v4、およびv1 → v4連続移行
+- schemaVersion v3 → v4、v4 → v5、およびv1 → v5連続移行
 - 揚げ油交換周期
 - 内製 vs 既製品比較とROI
 - FIFO、複数取得価格Lot、購入package、最低購入数
@@ -306,12 +352,19 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 非破壊Scenario Override、削除、複数Scenario比較
 - 食数、時給、Resource価格、営業時間のSensitivity
 - 基準店舗、バッチ、購入packageを含む販売食数損益分岐
+- Equipment容量6食の同一バッチと7食目の次バッチ
+- FIFO Queue、平均・最大・p90待ち時間、最大Queueと単純店舗の理論処理能力
+- active人員の二重割当防止、人員・設備増強によるQueue／処理能力変化
+- 独立工程の並行処理と複数依存完了後の後工程開始
+- completeAfterClosing / dropAtClosing、設備・人員利用率
+- 決定論的DemandProfile、Workflow循環、Capacity Scenarioの非破壊Override
+- 需要売上と能力制約後売上・利益の分離
 
 ## ディレクトリ構成
 
 ```text
 src/
-  calculations/   # UI非依存の損益・在庫・Actual差異・感度・Scenarioとテスト
+  calculations/   # UI非依存の損益・在庫・意思決定・Capacity Engineとテスト
   components/     # Dashboard、編集画面、グラフ、UI部品
   data/           # 初回サンプル店舗
   models/         # 中心データ型
@@ -327,8 +380,10 @@ src/
 - 棚卸差異、実地棚卸、ロットの手動入出庫帳簿
 - 個・枚・本などの品目別換算係数
 - 祝日・臨時休業を扱う実カレンダー
-- 厨房設備能力、同時作業、ピーク時間、待ち行列の最適化
-- 勤務シフトと工程作業の時間帯・担当者レベルでの割当
+- ランダム来店、ポアソン到着、グループ客、待ち時間による離脱、モンテカルロ（Phase 6候補）
+- 席数、滞在時間、テーブル回転、デリバリー注文
+- 分単位Inventory同期、食材欠品によるメニュー停止、閉店後残業割増
+- 自動人員最適化、厨房ピーク能力の自動改善、詳細な設備投資回収
 - 詳細な未販売・期限切れ・作業ミス廃棄入力
 - ActualのCSV / POS / 請求書 / 会計ソフトImport、実績から設定への確認付き適用
 - 任意の感度変化率、複数パラメータ同時感度、メニュー構成・内製比率感度

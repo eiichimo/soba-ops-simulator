@@ -113,4 +113,51 @@ describe('settings validation', () => {
       'invalid-scenario-operating-days',
     ]))
   })
+
+  it('Equipment・KitchenOperation・StaffShiftの不正値と参照を検証する', () => {
+    const settings = createBenchmarkStore()
+    settings.capacity.equipment[0].capacity = 0
+    settings.capacity.equipment[0].concurrentJobs = 0
+    settings.capacity.operations[0].durationMinutes = 0
+    settings.capacity.operations[0].activeLaborMinutes = -1
+    settings.capacity.operations[0].batchCapacity = 0
+    settings.capacity.operations[0].equipmentRequirements = [{ equipmentId: 'missing-equipment', occupationMinutes: 0, units: 0 }]
+    settings.capacity.operations[0].laborRequirements = [{ laborRoleIds: ['missing-role'], headcount: -1 }]
+    settings.capacity.staffShifts[0].headcount = -1
+    settings.capacity.staffShifts[0].startTime = '08:00'
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'invalid-equipment-capacity',
+      'invalid-equipment-concurrency',
+      'invalid-kitchen-duration',
+      'invalid-active-labor-minutes',
+      'invalid-kitchen-batch-capacity',
+      'missing-kitchen-equipment',
+      'invalid-equipment-requirement',
+      'missing-kitchen-labor-role',
+      'negative-kitchen-headcount',
+      'negative-shift-headcount',
+      'staff-shift-outside-business-hours',
+    ]))
+  })
+
+  it('Capacity Scenario Overrideの不存在参照と不正値を検証する', () => {
+    const settings = createBenchmarkStore()
+    settings.scenarios = [{
+      id: 'invalid-capacity-scenario', name: '不正Capacity', overrides: {
+        staffShiftHeadcountOverrides: { missing: -1 },
+        equipmentCapacityOverrides: { missing: 0 },
+        kitchenOperationDurationOverrides: { missing: 0 },
+      },
+    }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'missing-scenario-shift',
+      'negative-scenario-shift-headcount',
+      'missing-scenario-equipment',
+      'invalid-scenario-equipment-capacity',
+      'missing-scenario-kitchen-operation',
+      'invalid-scenario-kitchen-duration',
+    ]))
+  })
 })
