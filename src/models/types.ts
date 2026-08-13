@@ -26,6 +26,11 @@ export type VarianceInterpretation = 'favorable' | 'unfavorable' | 'neutral' | '
 export type SensitivityTarget = 'mealsPerDay' | 'averageSellingPrice' | 'laborWage' | 'resourcePrice' | 'waterPrice' | 'gasPrice' | 'electricityPrice' | 'operatingHours' | 'operatingDays'
 export type EquipmentCategory = 'sobaBoiler' | 'fryer' | 'stove' | 'burner' | 'dishwasher' | 'washing' | 'plating' | 'service' | 'other'
 export type FulfillmentPolicy = 'completeAfterClosing' | 'dropAtClosing'
+export type DemandMode = 'deterministic' | 'stochastic'
+export type ArrivalDistribution = 'uniform' | 'poisson'
+export type SeatingCategory = 'counter' | 'table'
+export type DurationDistribution = 'fixed' | 'uniform'
+export type PartyState = 'waiting' | 'seated' | 'ordered' | 'served' | 'departed' | 'abandoned'
 
 export interface Resource {
   id: string
@@ -295,6 +300,7 @@ export interface ScenarioOverrides {
   staffShiftHeadcountOverrides?: Record<string, number>
   equipmentCapacityOverrides?: Record<string, number>
   kitchenOperationDurationOverrides?: Record<string, number>
+  seatingUnitCountOverrides?: Record<string, number>
 }
 
 export interface Scenario {
@@ -373,7 +379,63 @@ export interface DemandProfile {
   timeSlots: DemandTimeSlot[]
 }
 
+export interface ArrivalTimeSlot {
+  id: string
+  startTime: string
+  endTime: string
+  expectedGuests: number
+  arrivalDistribution: ArrivalDistribution
+}
+
+export interface ArrivalProfile {
+  id: string
+  name: string
+  slots: ArrivalTimeSlot[]
+}
+
+export interface PartySizeProbability {
+  size: number
+  probability: number
+}
+
+export interface SeatingUnit {
+  id: string
+  name: string
+  capacity: number
+  count: number
+  category: SeatingCategory
+  enabled: boolean
+}
+
+export interface RandomDurationSettings {
+  distribution: DurationDistribution
+  meanMinutes: number
+  minMinutes: number
+  maxMinutes: number
+}
+
+export interface MonteCarloSettings {
+  runs: number
+  maximumRuns: number
+  baseSeed: number
+  targetProfit: number
+  targetServiceLevelRate: number
+}
+
+export interface StochasticDemandSettings {
+  seed: number
+  arrivalProfile: ArrivalProfile
+  partySizeDistribution: PartySizeProbability[]
+  seatingUnits: SeatingUnit[]
+  orderDelay: RandomDurationSettings
+  dwellTime: RandomDurationSettings
+  maxSeatingWaitMinutes: number
+  monteCarlo: MonteCarloSettings
+  isReferenceDemand: boolean
+}
+
 export interface CapacitySettings {
+  demandMode: DemandMode
   equipment: Equipment[]
   operations: KitchenOperation[]
   workflows: KitchenWorkflow[]
@@ -382,6 +444,7 @@ export interface CapacitySettings {
   targetWaitMinutes: number
   fulfillmentPolicy: FulfillmentPolicy
   bucketMinutes: number
+  stochasticDemand: StochasticDemandSettings
 }
 
 export interface AppSettings {
@@ -667,6 +730,176 @@ export interface CapacityOrder {
   arrivalTime: string
   menuItemId: string
   quantity: number
+}
+
+export interface GeneratedParty {
+  id: string
+  arrivalMinute: number
+  arrivalTime: string
+  size: number
+  orderDelayMinutes: number
+  dwellMinutes: number
+  menuItemIds: string[]
+  sourceSlotId?: string
+}
+
+export interface PartyResult extends GeneratedParty {
+  state: PartyState
+  seatingInstanceId?: string
+  seatingUnitId?: string
+  seatedMinute?: number
+  seatedTime?: string
+  orderMinute?: number
+  orderTime?: string
+  servedMinute?: number
+  servedTime?: string
+  departureMinute?: number
+  departureTime?: string
+  seatingWaitMinutes?: number
+  kitchenWaitMinutes?: number
+  totalWaitMinutes?: number
+  abandonmentMinute?: number
+  abandonmentTime?: string
+  abandonmentReason?: 'maxWait' | 'closing'
+  orderIds: string[]
+}
+
+export interface SeatingQueuePoint {
+  minute: number
+  time: string
+  partyCount: number
+  guestCount: number
+}
+
+export interface SeatingUtilizationResult {
+  seatingUnitId: string
+  name: string
+  capacity: number
+  count: number
+  seatedParties: number
+  seatedGuests: number
+  occupiedUnitMinutes: number
+  occupiedSeatMinutes: number
+  unusedSeatMinutes: number
+  availableUnitMinutes: number
+  availableSeatMinutes: number
+  unitUtilization: number
+  seatUtilization: number
+  turnover: number
+}
+
+export interface CustomerJourneyEconomicResult {
+  potentialDemandMeals: number
+  realizedMeals: number
+  realizedRevenue: number
+  realizedUsageCost: number
+  realizedOperatingProfit: number
+  demandRevenue: number
+  demandOperatingProfit: number
+}
+
+export interface CustomerJourneyResult {
+  seed: number
+  potentialGuests: number
+  arrivedGuests: number
+  arrivedParties: number
+  seatedGuests: number
+  seatedParties: number
+  abandonedGuests: number
+  abandonedParties: number
+  abandonmentRate: number
+  orderedGuests: number
+  kitchenCompletedGuests: number
+  realizedSalesMeals: number
+  averageSeatingWaitMinutes: number
+  medianSeatingWaitMinutes: number
+  p90SeatingWaitMinutes: number
+  maxSeatingWaitMinutes: number
+  averageKitchenWaitMinutes: number
+  p90KitchenWaitMinutes: number
+  averageTotalWaitMinutes: number
+  p90TotalWaitMinutes: number
+  maxSeatingQueueParties: number
+  maxSeatingQueueGuests: number
+  maxSeatingQueueMinute: number
+  maxSeatingQueueTime: string
+  totalSeats: number
+  seatTurnover: number
+  seatUtilization: number
+  unusedSeatMinutes: number
+  finalDepartureMinute: number
+  finalDepartureTime: string
+  parties: PartyResult[]
+  seatingQueueTimeline: SeatingQueuePoint[]
+  seatingUtilization: SeatingUtilizationResult[]
+  capacity: CapacitySimulationResult
+  economic: CustomerJourneyEconomicResult
+  warnings: string[]
+}
+
+export interface MetricStatistics {
+  mean: number
+  median: number
+  p5: number
+  p10: number
+  p90: number
+  p95: number
+  min: number
+  max: number
+}
+
+export interface MonteCarloRunSummary {
+  runIndex: number
+  seed: number
+  arrivedGuests: number
+  abandonedGuests: number
+  abandonmentRate: number
+  realizedSalesMeals: number
+  revenue: number
+  operatingProfit: number
+  averageSeatingWaitMinutes: number
+  averageKitchenWaitMinutes: number
+  averageTotalWaitMinutes: number
+  maxQueueLength: number
+  finalCompletionMinute: number
+  withinTargetRate: number
+  seatUtilization: number
+}
+
+export interface MonteCarloResult {
+  runs: number
+  baseSeed: number
+  summaries: MonteCarloRunSummary[]
+  statistics: {
+    arrivedGuests: MetricStatistics
+    abandonedGuests: MetricStatistics
+    abandonmentRate: MetricStatistics
+    realizedSalesMeals: MetricStatistics
+    revenue: MetricStatistics
+    operatingProfit: MetricStatistics
+    seatingWait: MetricStatistics
+    kitchenWait: MetricStatistics
+    totalWait: MetricStatistics
+    maxQueue: MetricStatistics
+    finalCompletionMinute: MetricStatistics
+    seatUtilization: MetricStatistics
+  }
+  lossRunRate: number
+  targetProfitProbability: number
+  serviceLevelProbability: number
+  lowProfitSeed: number
+  medianProfitSeed: number
+  highProfitSeed: number
+}
+
+export interface MonteCarloScenarioComparison {
+  id: string
+  name: string
+  result: MonteCarloResult
+  meanProfitDifference: number
+  p10ProfitDifference: number
+  abandonmentRateDifference: number
+  totalWaitDifference: number
 }
 
 export interface OrderOperationResult {

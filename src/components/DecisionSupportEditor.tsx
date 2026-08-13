@@ -25,7 +25,8 @@ const targetNames: Record<SensitivityTarget, string> = {
   operatingDays: '週営業日数',
 }
 
-const uniqueId = () => `scenario-${Date.now()}-${Math.random().toString(16).slice(2)}`
+let idSequence = 0
+const uniqueId = () => `scenario-${Date.now()}-${idSequence += 1}`
 const numberValue = (value: string) => Number.isFinite(Number(value)) ? Number(value) : 0
 const percentMultiplier = (value: string) => Math.max(0, 1 + numberValue(value) / 100)
 const percentValue = (multiplier?: number) => Math.round(((multiplier ?? 1) - 1) * 1000) / 10
@@ -130,6 +131,9 @@ export const DecisionSupportEditor = ({ settings, onChange }: Props) => {
         const operationEntry = Object.entries(scenario.overrides.kitchenOperationDurationOverrides ?? {})[0]
         const selectedOperationId = operationEntry?.[0] ?? settings.capacity.operations[0]?.id ?? ''
         const selectedOperationDuration = operationEntry?.[1] ?? settings.capacity.operations.find((operation) => operation.id === selectedOperationId)?.durationMinutes ?? 0
+        const seatingEntry = Object.entries(scenario.overrides.seatingUnitCountOverrides ?? {})[0]
+        const selectedSeatingId = seatingEntry?.[0] ?? settings.capacity.stochasticDemand.seatingUnits[0]?.id ?? ''
+        const selectedSeatingCount = seatingEntry?.[1] ?? settings.capacity.stochasticDemand.seatingUnits.find((unit) => unit.id === selectedSeatingId)?.count ?? 0
         return <Panel key={scenario.id} className="scenario-editor-card" title={scenario.name} actions={<Button variant="danger" onClick={() => {
           if (window.confirm(`${scenario.name}を削除しますか？`)) onChange(removeScenario(settings, scenario.id))
         }}>削除</Button>}>
@@ -148,6 +152,8 @@ export const DecisionSupportEditor = ({ settings, onChange }: Props) => {
             <NumberField label="設備容量" suffix="単位" min={0.01} value={selectedEquipmentCapacity} onChange={(event) => updateOverrides(scenario, { equipmentCapacityOverrides: { [selectedEquipmentId]: numberValue(event.target.value) } })}/>
             <SelectField label="変更厨房工程" value={selectedOperationId} onChange={(event) => updateOverrides(scenario, { kitchenOperationDurationOverrides: { [event.target.value]: settings.capacity.operations.find((operation) => operation.id === event.target.value)?.durationMinutes ?? 1 } })}>{settings.capacity.operations.map((operation) => <option key={operation.id} value={operation.id}>{operation.name}</option>)}</SelectField>
             <NumberField label="工程所要時間" suffix="分" min={0.01} value={selectedOperationDuration} onChange={(event) => updateOverrides(scenario, { kitchenOperationDurationOverrides: { [selectedOperationId]: numberValue(event.target.value) } })}/>
+            <SelectField label="変更客席" value={selectedSeatingId} onChange={(event) => updateOverrides(scenario, { seatingUnitCountOverrides: { [event.target.value]: settings.capacity.stochasticDemand.seatingUnits.find((unit) => unit.id === event.target.value)?.count ?? 0 } })}>{settings.capacity.stochasticDemand.seatingUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</SelectField>
+            <NumberField label="席・卓数" suffix="台" min={0} value={selectedSeatingCount} onChange={(event) => updateOverrides(scenario, { seatingUnitCountOverrides: { [selectedSeatingId]: numberValue(event.target.value) } })}/>
           </div>
         </Panel>
       })}

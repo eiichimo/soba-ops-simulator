@@ -160,4 +160,49 @@ describe('settings validation', () => {
       'invalid-scenario-kitchen-duration',
     ]))
   })
+
+  it('Phase 6のParty・客席・滞在・Monte Carlo設定を検証する', () => {
+    const settings = createBenchmarkStore()
+    const stochastic = settings.capacity.stochasticDemand
+    stochastic.arrivalProfile.slots[0] = {
+      ...stochastic.arrivalProfile.slots[0], startTime: '12:00', endTime: '11:00', expectedGuests: -1,
+    }
+    stochastic.partySizeDistribution = [{ size: 0, probability: -1 }]
+    stochastic.seatingUnits[0].capacity = 0
+    stochastic.seatingUnits[0].count = -1
+    stochastic.orderDelay.meanMinutes = -1
+    stochastic.dwellTime.meanMinutes = 0
+    stochastic.maxSeatingWaitMinutes = -1
+    stochastic.monteCarlo.runs = 1_001
+    stochastic.monteCarlo.maximumRuns = 1_000
+
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'invalid-arrival-range',
+      'negative-expected-guests',
+      'invalid-party-size',
+      'negative-party-probability',
+      'party-probability-total',
+      'invalid-seating-capacity',
+      'negative-seating-count',
+      'invalid-order-delay',
+      'invalid-dwell-time',
+      'invalid-max-seating-wait',
+      'monte-carlo-runs-exceeded',
+    ]))
+  })
+
+  it('Phase 6 Scenarioの客席Overrideを検証する', () => {
+    const settings = createBenchmarkStore()
+    settings.scenarios = [{
+      id: 'invalid-seating-scenario', name: '不正客席', overrides: {
+        seatingUnitCountOverrides: { missing: -1 },
+      },
+    }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining([
+      'missing-scenario-seating-unit',
+      'negative-scenario-seating-count',
+    ]))
+  })
 })

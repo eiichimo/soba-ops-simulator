@@ -1,10 +1,11 @@
 import { createSampleSettings } from '../data/sampleData'
 import { createDefaultCapacitySettings } from '../data/capacityDefaults'
+import { createDefaultStochasticDemand } from '../data/demandDefaults'
 import { todayLocalDate } from '../calculations/calendar'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 5
+export const CURRENT_SCHEMA_VERSION = 6
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -18,6 +19,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && !!candidate.utilities
     && (candidate.schemaVersion < 4 || (Array.isArray(candidate.actualPeriods) && Array.isArray(candidate.scenarios)))
     && (candidate.schemaVersion < 5 || !!candidate.capacity)
+    && (candidate.schemaVersion < 6 || (!!candidate.capacity?.stochasticDemand && !!candidate.capacity?.demandMode))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -81,12 +83,23 @@ export const migrateV4ToV5 = (settings: AppSettings): AppSettings => {
   }
 }
 
+export const migrateV5ToV6 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 6,
+  capacity: {
+    ...settings.capacity,
+    demandMode: settings.capacity.demandMode ?? 'deterministic',
+    stochasticDemand: settings.capacity.stochasticDemand ?? createDefaultStochasticDemand(settings.business, settings.capacity.demandProfile),
+  },
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
   if (migrated.schemaVersion === 2) migrated = migrateV2ToV3(migrated)
   if (migrated.schemaVersion === 3) migrated = migrateV3ToV4(migrated)
   if (migrated.schemaVersion === 4) migrated = migrateV4ToV5(migrated)
+  if (migrated.schemaVersion === 5) migrated = migrateV5ToV6(migrated)
   return migrated
 }
 

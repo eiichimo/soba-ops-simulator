@@ -15,7 +15,8 @@ import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, TextField } f
 
 type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void }
 
-const uniqueId = () => `actual-${Date.now()}-${Math.random().toString(16).slice(2)}`
+let idSequence = 0
+const uniqueId = () => `actual-${Date.now()}-${idSequence += 1}`
 const optionalNumber = (value: string) => value === '' ? undefined : Number.isFinite(Number(value)) ? Number(value) : undefined
 const inputValue = (value?: number) => value ?? ''
 const addDays = (dateText: string, days: number) => {

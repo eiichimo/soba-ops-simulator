@@ -52,15 +52,48 @@
 .workflow-node-row > span { align-self: center; color: var(--muted); font-size: 10px; }
 .workflow-node-row select[multiple] { min-height: 58px; }
 
+/* Phase 6: stochastic demand, seating and Monte Carlo */
+.journey-kpi-grid, .monte-kpi-grid { margin-bottom: 14px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+.journey-kpi-grid article, .monte-kpi-grid article { min-height: 104px; padding: 16px; border: 1px solid var(--line); border-radius: 11px; background: var(--paper); box-shadow: var(--shadow); }
+.journey-kpi-grid span, .journey-kpi-grid small, .monte-kpi-grid span, .monte-kpi-grid small { display: block; color: var(--muted); font-size: 9px; }
+.journey-kpi-grid strong, .monte-kpi-grid strong { display: block; margin: 9px 0 6px; color: var(--ink); font-size: 19px; }
+.journey-funnel { display: flex; align-items: stretch; justify-content: center; gap: 9px; }
+.journey-funnel > div { min-width: 104px; padding: 14px; border: 1px solid var(--line); border-radius: 9px; text-align: center; background: #fbfaf7; }
+.journey-funnel span, .journey-funnel strong { display: block; }
+.journey-funnel span { color: var(--muted); font-size: 9px; }
+.journey-funnel strong { margin-top: 6px; color: var(--green); font-size: 19px; }
+.journey-funnel > i { align-self: center; color: #a59f92; font-size: 15px; font-style: normal; }
+.journey-queue-summary { display: grid; gap: 10px; }
+.journey-queue-summary > div { padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.journey-queue-summary > div:last-child { padding-bottom: 0; border-bottom: 0; }
+.journey-queue-summary span, .journey-queue-summary small { display: block; color: var(--muted); font-size: 9px; }
+.journey-queue-summary strong { display: block; margin: 5px 0 3px; color: var(--ink); font-size: 15px; }
+.party-inspector { margin-bottom: 22px; }
+.queue-inspector-grid { margin-top: 16px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.queue-inspector-grid h3 { margin: 0 0 8px; color: var(--green); font-size: 10px; }
+.seed-actions, .monte-actions, .representative-runs { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; }
+.seed-actions { min-height: 36px; }
+.arrival-slot-row { grid-template-columns: 120px 120px minmax(150px, 1fr) minmax(140px, 1fr) auto; }
+.party-probability-grid { display: grid; grid-template-columns: repeat(5, minmax(120px, 1fr)); gap: 9px; }
+.party-probability-grid article { padding: 12px; display: grid; gap: 8px; border: 1px solid var(--line); border-radius: 9px; background: #fbfaf7; }
+.monte-actions { margin-top: 14px; }
+.monte-histogram svg { min-width: 680px; width: 100%; }
+.representative-runs .field { min-width: 240px; flex: 1; }
+
 @media (max-width: 1180px) {
   .capacity-kpi-grid { grid-template-columns: repeat(2, 1fr); }
+  .journey-kpi-grid, .monte-kpi-grid { grid-template-columns: repeat(2, 1fr); }
   .capacity-shift-row { grid-template-columns: repeat(3, 1fr); }
+  .arrival-slot-row { grid-template-columns: repeat(2, 1fr); }
+  .party-probability-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
 }
 
 @media (max-width: 760px) {
-  .capacity-kpi-grid, .capacity-card-grid, .capacity-economics-grid, .capacity-util-grid { grid-template-columns: 1fr; }
-  .capacity-demand-row, .capacity-shift-row, .workflow-node-row { grid-template-columns: 1fr; }
+  .capacity-kpi-grid, .journey-kpi-grid, .monte-kpi-grid, .capacity-card-grid, .capacity-economics-grid, .capacity-util-grid, .queue-inspector-grid { grid-template-columns: 1fr; }
+  .capacity-demand-row, .capacity-shift-row, .workflow-node-row, .arrival-slot-row { grid-template-columns: 1fr; }
   .workflow-node-row > span { display: none; }
+  .journey-funnel { justify-content: flex-start; overflow-x: auto; }
+  .party-probability-grid { grid-template-columns: 1fr; }
 }
 
 * { box-sizing: border-box; }

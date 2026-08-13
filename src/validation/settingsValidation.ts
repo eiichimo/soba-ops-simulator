@@ -195,6 +195,51 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (slot.meals < 0 || start === null || end === null || end <= start) issues.push(issue('error', 'invalid-demand-slot', '需要時間帯と食数を正しく設定してください。', `capacity.demandProfile.timeSlots.${index}`))
   }
 
+  const stochastic = settings.capacity.stochasticDemand
+  for (const [index, slot] of stochastic.arrivalProfile.slots.entries()) {
+    const path = `capacity.stochasticDemand.arrivalProfile.slots.${index}`
+    const start = timeToMinutes(slot.startTime)
+    const end = timeToMinutes(slot.endTime)
+    if (start === null || end === null || end <= start) issues.push(issue('error', 'invalid-arrival-range', '来店時間帯の終了時刻は開始時刻より後にしてください。', path))
+    else if (businessOpening !== null && businessClosing !== null && (start < businessOpening || end > businessClosing)) {
+      issues.push(issue('warning', 'arrival-outside-business-hours', '来店Profileに営業時間外の時間帯があります。営業時間内だけが生成対象です。', path))
+    }
+    if (slot.expectedGuests < 0) issues.push(issue('error', 'negative-expected-guests', '平均来店人数は0以上にしてください。', path))
+    if (slot.expectedGuests === 0) issues.push(issue('warning', 'zero-expected-guests', '平均来店人数が0人の時間帯があります。', path))
+  }
+  const partyProbabilityTotal = stochastic.partySizeDistribution.reduce((sum, item) => sum + item.probability, 0)
+  for (const [index, item] of stochastic.partySizeDistribution.entries()) {
+    const path = `capacity.stochasticDemand.partySizeDistribution.${index}`
+    if (item.size <= 0) issues.push(issue('error', 'invalid-party-size', 'Party人数は1人以上にしてください。', path))
+    if (item.probability < 0) issues.push(issue('error', 'negative-party-probability', 'Party人数確率は0%以上にしてください。', path))
+  }
+  if (Math.abs(partyProbabilityTotal - 100) > 0.01) issues.push(issue('warning', 'party-probability-total', `Party人数確率の合計は${partyProbabilityTotal.toFixed(1)}%です。`, 'capacity.stochasticDemand.partySizeDistribution'))
+
+  for (const [index, unit] of stochastic.seatingUnits.entries()) {
+    const path = `capacity.stochasticDemand.seatingUnits.${index}`
+    if (unit.capacity <= 0) issues.push(issue('error', 'invalid-seating-capacity', `${unit.name}の収容人数は0より大きくしてください。`, path))
+    if (unit.count < 0) issues.push(issue('error', 'negative-seating-count', `${unit.name}の席・卓数は0以上にしてください。`, path))
+  }
+  const validateDuration = (label: string, duration: typeof stochastic.orderDelay, allowZero: boolean, path: string) => {
+    if ((allowZero ? duration.meanMinutes < 0 : duration.meanMinutes <= 0)
+      || (allowZero ? duration.minMinutes < 0 : duration.minMinutes <= 0)
+      || (allowZero ? duration.maxMinutes < 0 : duration.maxMinutes <= 0)
+      || duration.maxMinutes < duration.minMinutes) {
+      issues.push(issue('error', allowZero ? 'invalid-order-delay' : 'invalid-dwell-time', `${label}の時間範囲が正しくありません。`, path))
+    }
+  }
+  validateDuration('注文遅延', stochastic.orderDelay, true, 'capacity.stochasticDemand.orderDelay')
+  validateDuration('滞在時間', stochastic.dwellTime, false, 'capacity.stochasticDemand.dwellTime')
+  if (stochastic.maxSeatingWaitMinutes < 0) issues.push(issue('error', 'invalid-max-seating-wait', '最大席待ち時間は0分以上にしてください。', 'capacity.stochasticDemand.maxSeatingWaitMinutes'))
+  if (stochastic.monteCarlo.runs <= 0) issues.push(issue('error', 'invalid-monte-carlo-runs', 'Monte Carlo run数は1以上にしてください。', 'capacity.stochasticDemand.monteCarlo.runs'))
+  if (stochastic.monteCarlo.maximumRuns <= 0 || stochastic.monteCarlo.maximumRuns > 1_000 || stochastic.monteCarlo.runs > stochastic.monteCarlo.maximumRuns) {
+    issues.push(issue('error', 'monte-carlo-runs-exceeded', 'Monte Carlo run数は設定上限かつ1,000以下にしてください。', 'capacity.stochasticDemand.monteCarlo'))
+  }
+  const totalSeats = stochastic.seatingUnits.filter((unit) => unit.enabled).reduce((sum, unit) => sum + unit.capacity * unit.count, 0)
+  const expectedGuests = stochastic.arrivalProfile.slots.reduce((sum, slot) => sum + Math.max(0, slot.expectedGuests), 0)
+  if (totalSeats === 0) issues.push(issue('warning', 'no-seating', '有効な客席が0席です。すべての来店Partyが離脱します。', 'capacity.stochasticDemand.seatingUnits'))
+  else if (expectedGuests > totalSeats * 10) issues.push(issue('warning', 'extremely-low-seating', '平均来店人数に対して客席が極端に少ない可能性があります。', 'capacity.stochasticDemand.seatingUnits'))
+
   const processGraph = new Map<string, string[]>()
   for (const process of settings.processes) {
     processGraph.set(process.id, process.inputs
@@ -295,6 +340,10 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
       if (!kitchenOperations.has(operationId)) issues.push(issue('error', 'missing-scenario-kitchen-operation', `${scenario.name}の厨房工程「${operationId}」が見つかりません。`, path))
       if (duration <= 0) issues.push(issue('error', 'invalid-scenario-kitchen-duration', `${scenario.name}の工程時間は0より大きくしてください。`, path))
     }
+    for (const [seatingUnitId, count] of Object.entries(scenario.overrides.seatingUnitCountOverrides ?? {})) {
+      if (!stochastic.seatingUnits.some((unit) => unit.id === seatingUnitId)) issues.push(issue('error', 'missing-scenario-seating-unit', `${scenario.name}の客席「${seatingUnitId}」が見つかりません。`, path))
+      if (count < 0) issues.push(issue('error', 'negative-scenario-seating-count', `${scenario.name}の客席数は0以上にしてください。`, path))
+    }
   }
   if (settings.scenarios.length > 5) issues.push(issue('warning', 'too-many-scenarios', '比較表示は先頭5件のScenarioまでです。', 'scenarios'))
 
@@ -308,6 +357,9 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   if (settings.capacity.equipment.some((item) => item.isReferenceCapacity)
     || settings.capacity.operations.some((operation) => operation.isReferenceCapacity)) {
     issues.push(issue('warning', 'reference-capacity', '厨房能力に初期参考値が残っています。実際の設備・作業時間へ更新してください。'))
+  }
+  if (stochastic.isReferenceDemand) {
+    issues.push(issue('warning', 'reference-demand-seating', '来店・客席条件に初期参考値が残っています。実際の来店傾向・席構成へ更新してください。'))
   }
 
   return issues

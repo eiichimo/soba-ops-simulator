@@ -36,7 +36,7 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
 })
 
 export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 5,
+  schemaVersion: 6,
   business: {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
