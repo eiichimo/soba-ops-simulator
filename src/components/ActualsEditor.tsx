@@ -65,7 +65,13 @@ export const ActualsEditor = ({ settings, onChange }: Props) => {
 
   const updateActuals = (patch: Partial<ActualValues>) => {
     if (!selected) return
-    updatePeriod({ actuals: { ...selected.actuals, ...patch } })
+    updatePeriod({
+      actuals: { ...selected.actuals, ...patch },
+      sourceMetadata: [
+        ...(selected.sourceMetadata ?? []).filter((metadata) => metadata.source !== 'manual'),
+        { source: 'manual', fields: Object.keys(patch), recordedAt: new Date().toISOString() },
+      ],
+    })
   }
 
   const updateResource = (resourceId: string, unit: Unit, patch: Partial<ActualResourceRecord>) => {

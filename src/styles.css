@@ -750,3 +750,16 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
   .optimization-recommendation { align-items: flex-start; flex-direction: column; }
   .planning-weekday-grid { grid-template-columns: 1fr 1fr; }
 }
+.accuracy-tabs { margin-bottom: 18px; }
+.import-issues { display: grid; gap: 6px; margin: 12px 0; max-height: 360px; overflow: auto; }
+.import-issues .alert { margin: 0; padding: 9px 12px; }
+.calibration-candidate-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.calibration-candidate-grid h3 { margin: 4px 0; }
+.calibration-candidate-grid p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.before-after { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.before-after span { border: 1px solid var(--line); border-radius: 8px; padding: 8px; display: flex; justify-content: space-between; }
+.period-check-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 14px; }
+.muted { color: var(--muted); }
+@media (max-width: 640px) {
+  .calibration-candidate-grid { grid-template-columns: 1fr; }
+}

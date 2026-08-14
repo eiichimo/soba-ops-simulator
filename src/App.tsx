@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Dashboard } from './components/Dashboard'
 import { ComparisonEditor, DataManager, LaborEditor, MenuEditor, OperationsEditor, ProcessesEditor, ResourcesEditor, UtilitiesEditor } from './components/Editors'
 import { InventoryEditor } from './components/InventoryEditor'
-import { ActualsEditor } from './components/ActualsEditor'
+import { ModelAccuracyEditor } from './components/ModelAccuracyEditor'
 import { DecisionSupportEditor } from './components/DecisionSupportEditor'
 import { CapacityEditor } from './components/CapacityEditor'
 import { DemandSimulationEditor } from './components/DemandSimulationEditor'
@@ -26,7 +26,7 @@ const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[
   { id: 'resources', label: '原材料', caption: '仕入・歩留まり', icon: 'box' },
   { id: 'processes', label: '仕込み / レシピ', caption: 'Input → Output', icon: 'recipe' },
   { id: 'inventory', label: '在庫・仕入', caption: 'FIFO・購入支出', icon: 'box' },
-  { id: 'actuals', label: '実績', caption: '予測 vs 実績', icon: 'data' },
+  { id: 'actuals', label: '実績・校正', caption: 'Import・精度改善', icon: 'data' },
   { id: 'analysis', label: '感度・Scenario', caption: '意思決定支援', icon: 'trend' },
   { id: 'labor', label: '人件費', caption: '役割・実作業', icon: 'labor' },
   { id: 'utilities', label: '光熱費・設備', caption: '水道・ガス・電気・油', icon: 'utility' },
@@ -88,7 +88,7 @@ export default function App() {
       case 'resources': return <ResourcesEditor {...common} />
       case 'processes': return <ProcessesEditor {...common} />
       case 'inventory': return <InventoryEditor {...common} />
-      case 'actuals': return <ActualsEditor {...common} />
+      case 'actuals': return <ModelAccuracyEditor {...common} />
       case 'analysis': return <DecisionSupportEditor {...common} />
       case 'labor': return <LaborEditor {...common} />
       case 'utilities': return <UtilitiesEditor {...common} />
@@ -121,7 +121,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps Phase 8</span><span>在庫・仕込み・発注を翌日へ引き継ぎ、週間運営の利益・廃棄・欠品trade-offを比較します。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 9</span><span>実績CSVをActualへ取り込み、校正候補とBacktestでモデル精度を継続的に検証します。</span></footer>
     </div>
   </div>
 }

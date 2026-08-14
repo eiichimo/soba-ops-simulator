@@ -3,7 +3,7 @@ import { createSampleSettings } from '../data/sampleData'
 import { parseSettingsJson } from './settingsStorage'
 
 describe('settings schema migration', () => {
-  it('schemaVersion v1を旧人件費計算を維持するv8へ連続移行する', () => {
+  it('schemaVersion v1を旧人件費計算を維持するv9へ連続移行する', () => {
     const legacy = createSampleSettings() as unknown as Record<string, unknown>
     legacy.schemaVersion = 1
     const business = legacy.business as Record<string, unknown>
@@ -14,7 +14,7 @@ describe('settings schema migration', () => {
     delete legacy.optimizationStudies
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.business.simulationStartDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
     expect(migrated.processes.every((process) => process.laborCostTreatment === 'additionalLabor')).toBe(true)
     expect(migrated.inventory.carryOverEnabled).toBe(true)
@@ -38,7 +38,7 @@ describe('settings schema migration', () => {
     resources[0].minimumPurchaseLot = 0
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.inventory.carryOverEnabled).toBe(true)
     expect(migrated.inventory.openingLots).toEqual([])
     expect(migrated.resources[0].minimumPurchaseLot).toBe(1)
@@ -51,7 +51,7 @@ describe('settings schema migration', () => {
     delete legacy.scenarios
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.actualPeriods).toEqual([])
     expect(migrated.scenarios).toEqual([])
   })
@@ -63,7 +63,7 @@ describe('settings schema migration', () => {
     for (const menu of legacy.menuItems as Record<string, unknown>[]) delete menu.kitchenWorkflowId
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.capacity.equipment[0]).toMatchObject({ id: 'default-service-station', capacity: 4, isReferenceCapacity: true })
     expect(migrated.capacity.operations[0]).toMatchObject({ id: 'default-service-operation', durationMinutes: 1 })
     expect(migrated.capacity.demandProfile.timeSlots[0].meals).toBe(migrated.business.mealsPerDay)
@@ -78,7 +78,7 @@ describe('settings schema migration', () => {
     delete capacity.stochasticDemand
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.capacity.demandMode).toBe('deterministic')
     expect(migrated.capacity.stochasticDemand.partySizeDistribution).toHaveLength(5)
     expect(migrated.capacity.stochasticDemand.seatingUnits).toHaveLength(3)
@@ -91,7 +91,7 @@ describe('settings schema migration', () => {
     delete legacy.optimizationStudies
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.optimizationStudies).toEqual([])
   })
 
@@ -125,7 +125,7 @@ describe('settings schema migration', () => {
     delete study.paretoMetric
 
     const migrated = parseSettingsJson(JSON.stringify(legacy))
-    expect(migrated.schemaVersion).toBe(8)
+    expect(migrated.schemaVersion).toBe(9)
     expect(migrated.planning.horizonDays).toBe(7)
     expect(migrated.resources.every((resource) => resource.procurementLeadTimeDays === 0 && resource.procurementLookaheadDays === 0)).toBe(true)
     expect(migrated.processes.every((process) => process.prepLookaheadDays === 0)).toBe(true)
@@ -138,5 +138,33 @@ describe('settings schema migration', () => {
     settings.planning.purchaseOrders = [{ id: 'order', resourceId: settings.resources[0].id, orderedDate: '2026-08-20', deliveryDate: '2026-08-21', packageCount: 2, quantity: 2_000, cost: 1_500, status: 'planned' }]
     const restored = parseSettingsJson(JSON.stringify(settings))
     expect(restored.planning).toEqual(settings.planning)
+  })
+
+  it('schemaVersion v8からv9へImport・Calibrationの安全な初期値を補完する', () => {
+    const legacy = createSampleSettings() as unknown as Record<string, unknown>
+    legacy.schemaVersion = 8
+    delete legacy.importMappingProfiles
+    delete legacy.importRecords
+    delete legacy.calibrationHistory
+    delete legacy.calibrationSettings
+    const periods = legacy.actualPeriods as Array<Record<string, unknown>>
+    periods.push({ id: 'old-actual', name: '旧実績', startDate: '2026-08-01', endDate: '2026-08-31', actuals: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } } })
+
+    const migrated = parseSettingsJson(JSON.stringify(legacy))
+    expect(migrated.schemaVersion).toBe(9)
+    expect(migrated.importMappingProfiles).toEqual([])
+    expect(migrated.importRecords).toEqual([])
+    expect(migrated.calibrationHistory).toEqual([])
+    expect(migrated.calibrationSettings).toEqual({ minimumPeriods: 1, varianceWarningThreshold: 0.2 })
+    expect(migrated.actualPeriods[0].actuals).toMatchObject({ laborRecords: [], wasteRecords: [], inventoryRecords: [] })
+  })
+
+  it('schemaVersion v9のMapping・Import metadata・Calibration HistoryをJSONで往復する', () => {
+    const settings = createSampleSettings()
+    settings.importMappingProfiles = [{ id: 'mapping', name: 'POS', sourceType: 'sales', mappings: { date: '日付' }, entityMappings: { menuItems: {}, resources: {}, laborRoles: {}, wasteReasons: {} }, updatedAt: '2026-09-01T00:00:00.000Z' }]
+    settings.calibrationHistory = [{ id: 'history', appliedAt: '2026-09-01T00:00:00.000Z', targetType: 'utilityUnitPrice', targetId: 'electricity', field: 'unitPrice', previousValue: 30, newValue: 31, evidence: { description: '実績', periodCount: 1 }, sourceActualPeriodIds: [] }]
+    const restored = parseSettingsJson(JSON.stringify(settings))
+    expect(restored.importMappingProfiles).toEqual(settings.importMappingProfiles)
+    expect(restored.calibrationHistory).toEqual(settings.calibrationHistory)
   })
 })

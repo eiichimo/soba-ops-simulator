@@ -38,6 +38,14 @@ export type OptimizationConstraintMetric = 'laborCost' | 'meanOperatingProfit' |
 export type OptimizationConstraintOperator = '<=' | '>='
 export type OptimizationParetoMetric = 'profitWait' | 'profitWaste' | 'profitStockout'
 export type PurchaseOrderStatus = 'planned' | 'pending' | 'delivered' | 'cancelled'
+export type ImportSourceType = 'sales' | 'purchases' | 'utilities' | 'labor' | 'waste' | 'inventory' | 'generic'
+export type ImportSemanticField = 'date' | 'startDate' | 'endDate' | 'entityName' | 'quantity' | 'unit' | 'amount' | 'reason' | 'inventoryValue'
+export type ImportIssueSeverity = 'error' | 'warning'
+export type ImportMergeMode = 'add' | 'replace'
+export type ActualValueSource = 'manual' | 'imported' | 'calculated'
+export type CalibrationConfidence = 'low' | 'medium' | 'high'
+export type CalibrationTargetType = 'utilityUnitPrice' | 'resourceUnitPrice' | 'laborHourlyWage' | 'demandMeals' | 'menuAveragePrice'
+export type BacktestMetricKey = 'revenue' | 'meals' | 'usageCost' | 'purchaseExpenditure' | 'laborCost' | 'water' | 'gas' | 'electricity' | 'operatingProfit'
 
 export interface Resource {
   id: string
@@ -247,6 +255,29 @@ export interface MakeBuyComparison {
 export interface ActualMenuSales {
   menuItemId: string
   quantity: number
+  revenue?: number
+}
+
+export interface ActualLaborRecord {
+  laborRoleId: string
+  hours?: number
+  cost?: number
+}
+
+export interface ActualWasteRecord {
+  resourceId: string
+  quantity: number
+  unit: Unit
+  reason: WasteReason
+  cost?: number
+}
+
+export interface ActualInventoryRecord {
+  resourceId: string
+  date: string
+  quantity: number
+  unit: Unit
+  inventoryValue?: number
 }
 
 export interface ActualResourceRecord {
@@ -278,6 +309,9 @@ export interface ActualValues {
   wasteCost?: number
   laborCost?: number
   laborHours?: number
+  laborRecords?: ActualLaborRecord[]
+  wasteRecords?: ActualWasteRecord[]
+  inventoryRecords?: ActualInventoryRecord[]
   utilities: {
     water: ActualUtilityRecord
     gas: ActualUtilityRecord
@@ -297,6 +331,138 @@ export interface ActualPeriod {
   endDate: string
   actuals: ActualValues
   notes?: string
+  sourceMetadata?: ActualSourceMetadata[]
+}
+
+export interface ActualSourceMetadata {
+  source: ActualValueSource
+  fields: string[]
+  importRecordId?: string
+  recordedAt: string
+}
+
+export interface ImportValidationIssue {
+  severity: ImportIssueSeverity
+  code: string
+  message: string
+  rowNumber?: number
+  column?: string
+}
+
+export interface ImportDataset {
+  id: string
+  name: string
+  sourceType: ImportSourceType
+  importedAt: string
+  originalFileName?: string
+  columns: string[]
+  rows: Array<Record<string, string>>
+  rowHashes: string[]
+  mapping?: Partial<Record<ImportSemanticField, string>>
+  validationIssues?: ImportValidationIssue[]
+}
+
+export interface ImportEntityMappings {
+  menuItems: Record<string, string>
+  resources: Record<string, string>
+  laborRoles: Record<string, string>
+  wasteReasons: Record<string, WasteReason>
+}
+
+export interface ImportMappingProfile {
+  id: string
+  name: string
+  sourceType: ImportSourceType
+  mappings: Partial<Record<ImportSemanticField, string>>
+  entityMappings: ImportEntityMappings
+  updatedAt: string
+}
+
+export interface ImportRecord {
+  id: string
+  datasetId: string
+  datasetHash: string
+  sourceType: ImportSourceType
+  originalFileName?: string
+  actualPeriodId: string
+  importedAt: string
+  importedRows: number
+  skippedRows: number
+  errorRows: number
+  targetFields: string[]
+  mergeMode: ImportMergeMode
+  rowHashes: string[]
+  beforeActual: ActualValues
+  afterActual: ActualValues
+  undoneAt?: string
+}
+
+export interface CalibrationSettings {
+  minimumPeriods: number
+  varianceWarningThreshold: number
+}
+
+export interface CalibrationEvidence {
+  description: string
+  totalAmount?: number
+  totalQuantity?: number
+  unit?: string
+  periodCount: number
+}
+
+export interface CalibrationCandidate {
+  id: string
+  category: 'utility' | 'resource' | 'labor' | 'demand' | 'menu'
+  targetType: CalibrationTargetType
+  targetId?: string
+  field: string
+  currentValue: number
+  suggestedValue: number
+  evidence: CalibrationEvidence
+  confidence: CalibrationConfidence
+  sourceActualPeriodIds: string[]
+  informationalOnly?: boolean
+}
+
+export interface CalibrationHistoryEntry {
+  id: string
+  appliedAt: string
+  targetType: CalibrationTargetType
+  targetId?: string
+  field: string
+  previousValue: number
+  newValue: number
+  evidence: CalibrationEvidence
+  sourceActualPeriodIds: string[]
+  revertedAt?: string
+}
+
+export interface BacktestMetricResult {
+  key: BacktestMetricKey
+  label: string
+  predicted: number
+  actual: number | null
+  error: number | null
+  absoluteError: number | null
+  absolutePercentageError: number | null
+}
+
+export interface BacktestResult {
+  actualPeriodId: string
+  actualPeriodName: string
+  startDate: string
+  endDate: string
+  modelLabel: string
+  metrics: BacktestMetricResult[]
+}
+
+export interface BacktestAccuracyMetric {
+  key: BacktestMetricKey
+  label: string
+  mae: number | null
+  mape: number | null
+  sampleCount: number
+  mapeSampleCount: number
 }
 
 export interface ScenarioOverrides {
@@ -307,6 +473,7 @@ export interface ScenarioOverrides {
   }
   averageSellingPriceMultiplier?: number
   laborWageMultiplier?: number
+  laborHourlyWageOverrides?: Record<string, number>
   resourcePurchasePriceMultipliers?: Record<string, number>
   utilityUnitPriceMultipliers?: Partial<Record<'water' | 'gas' | 'electricity', number>>
   staffShiftHeadcountOverrides?: Record<string, number>
@@ -643,6 +810,10 @@ export interface AppSettings {
   capacity: CapacitySettings
   optimizationStudies: OptimizationStudy[]
   planning: PlanningSettings
+  importMappingProfiles: ImportMappingProfile[]
+  importRecords: ImportRecord[]
+  calibrationHistory: CalibrationHistoryEntry[]
+  calibrationSettings: CalibrationSettings
 }
 
 export interface CostBreakdown {

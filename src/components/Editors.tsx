@@ -444,7 +444,7 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
     <PageTitle eyebrow="DATA & BACKUP" title="データ管理" description="設定はこのブラウザに自動保存されます。JSONでバックアップ・移行できます。" />
     {message && <div className={`alert ${message.type}`}><Icon name="info" size={18}/><span>{message.text}</span></div>}
     <div className="data-action-grid">
-      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績、Scenario、厨房能力、来店・客席、複数日運営計画、発注、Optimization Study集計を1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
+      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績、Mapping Profile、Import metadata、Calibration履歴、Scenario、運営計画、Optimization集計を1つのJSONへ保存します。CSV原文は含みません。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
       <article><span className="data-icon import"><Icon name="data" size={26}/></span><h2>Import JSON</h2><p>SobaOpsから書き出した設定を読み込みます。現在の設定は上書きされます。</p><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }}/><Button onClick={() => fileInput.current?.click()}>ファイルを選択</Button></article>
       <article><span className="data-icon reset"><Icon name="store" size={26}/></span><h2>サンプルへ戻す</h2><p>入力内容を破棄し、初回起動時のサンプル蕎麦店データを復元します。</p><Button variant="danger" onClick={onReset}>初期状態へリセット</Button></article>
     </div>
@@ -456,6 +456,9 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
         <div><span>Outputs</span><strong>{settings.processes.reduce((sum, process) => sum + process.outputs.length, 0)}</strong></div>
         <div><span>Menu items</span><strong>{settings.menuItems.length}</strong></div>
         <div><span>Actual periods</span><strong>{settings.actualPeriods.length}</strong></div>
+        <div><span>Mapping profiles</span><strong>{settings.importMappingProfiles.length}</strong></div>
+        <div><span>Import records</span><strong>{settings.importRecords.length}</strong></div>
+        <div><span>Calibration history</span><strong>{settings.calibrationHistory.length}</strong></div>
         <div><span>Scenarios</span><strong>{settings.scenarios.length}</strong></div>
         <div><span>Equipment</span><strong>{settings.capacity.equipment.length}</strong></div>
         <div><span>Kitchen operations</span><strong>{settings.capacity.operations.length}</strong></div>
