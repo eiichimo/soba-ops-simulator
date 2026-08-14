@@ -1,6 +1,6 @@
 # SobaOps
 
-SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 7では、Phase 6までの経済・在庫・厨房能力・確率需要モデルを再利用し、制約付き離散全探索、候補ランキング、Pareto分析、境界解検出を追加しました。
+SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 8では、Phase 7までのEngine群を再利用し、在庫・仕込品・賞味期限・未入荷注文を翌日へ渡す複数日運営計画、Lead Time、stockout、複数日Monte Carlo / Optimizationを追加しました。
 
 単なる「1食原価」ではなく、固定費が販売量によってどう薄まるか、内製と既製品のどちらが有利か、営業時間や営業日数の変更が利益へどう影響するかを同じモデルから確認できます。初回起動時から、7種類の蕎麦メニューと原材料・仕込み工程を含むサンプル店舗が表示されます。
 
@@ -82,6 +82,15 @@ Viteの `base` はリポジトリPages用の `/soba-ops-simulator/` です。将
 - 人件費、利益、待ち時間、離脱率、Service Level、Staff・総席数などのConstraintとFeasible判定
 - Constraintを満たす上位候補、0件時の最小違反候補、Base差、探索境界、簡易設備投資回収日数の表示
 - 平均営業利益とp90厨房待ちのPareto Frontier、および候補の非破壊Scenario保存
+- 7 / 14 / 30日・カスタムのPlanning Horizonと、曜日Template・特定日Override
+- Day NのInventory Lot・Process Output・副産物・Pending OrderをDay N+1へ渡す連続状態遷移
+- Process別`prepLookaheadDays`、日付別Manual Prep、保存期限内に制限したバッチ仕込み
+- Resource別Lead Time・`procurementLookaheadDays`、購入package・最低購入数を維持した自動発注
+- 発注日と入荷日を分け、入荷日にLot生成・購入支出計上するProcurement Timeline
+- 欠品Resource、在庫制約後の提供食数、stockout失注食数・失注売上の表示
+- 日別損益、Inventory / Prep / Procurement Timeline、期間利益・廃棄・期末在庫の集計
+- `hash(baseSeed, runIndex, dayIndex)`を使う複数日Monte Carlo、p10期間利益・赤字期間率
+- 曜日別Staff、Prep / Procurement Lookaheadを含む複数日Optimizationと利益 / 廃棄・欠品Pareto軸
 - g / kg、ml / Lの自動換算と、不正な単位・参照・工程循環などのValidation
 - メニュー、Resource、Process、水道光熱、揚げ油まで追跡できる折りたたみ式の計算詳細
 - Inventory Lotを営業日・休業日を通して持ち越す日次状態遷移
@@ -121,6 +130,10 @@ Resource → Process → Output → Inventory → Consumption
 - `OptimizationStudy`: Objective、評価方式、離散Variable、Constraint、共通seed・run数、候補上限と保存済み集計をまとめます。
 - `OptimizationVariable`: StaffShift、Equipment、SeatingUnit、開閉店時刻、KitchenOperationの対象と候補値を保持します。UIのmin / max / stepも実行前に離散候補へ展開します。
 - `OptimizationConstraint`: 評価指標、`<= / >=`、基準値を持ちます。各候補は`feasible`と具体的な違反量を保持します。
+- `DailyOperatingPlan`: Base / 曜日Templateに対する特定日の営業、需要、Staff、Manual Prep差分です。
+- `PurchaseOrder`: Resource、発注日、入荷日、package数、数量、支出、状態を持ち、未入荷のまま翌日へ引き継げます。
+- `PlanningSettings`: Horizon、曜日Template、日付Override、Manual Purchase Order、複数日Monte Carlo条件をまとめます。
+- `MultiDaySimulationResult`: 日別結果、期間集計、期末Lot、Pending Order、Inventory / Prep / Procurement Timeline、stockoutを保持します。
 
 たとえば店舗用かえしは「内製かえし 2 L + 既製かえし 1 L → 店舗用かえし 3 L」という通常のProcessです。画面上でInput数量を変えれば、特殊なかえし専用ロジックを使わず混合比率が変わります。
 
@@ -145,7 +158,7 @@ Resource → Process → Output → Inventory → Consumption
 Phase 3では次を別の指標として扱います。
 
 - 使用原価: 期間中にメニュー販売へFIFO払い出ししたResource / Output Lotの取得原価。営業利益の費用計算に使います。工程間の払い出しは新しいOutput在庫へ振り替えるため、全体使用原価へ二重加算しません。
-- 購入支出: 在庫不足時に購入したpackageの支払額。購入日に簡易現金収支へ全額反映します。
+- 購入支出: 在庫不足時に購入したpackageの支払額。通常のLead Time 0計算では購入・入荷日、Phase 8ではPurchase Orderの入荷日に簡易現金収支へ全額反映します。
 - 期末在庫価額: 期間終了時に残った各Lotの数量 × 取得時単価です。購入価格が変わっても古いLotの取得原価は変えません。
 
 ```text
@@ -153,7 +166,7 @@ Phase 3では次を別の指標として扱います。
 数量整合             = 期首 + 購入 + 生産 - 使用 - 廃棄 = 期末
 ```
 
-最低購入package数は既存の `minimumPurchaseLot` を「1回の発注で最低何package購入するか」として利用します。自動発注は当日の需要を満たせないときだけ行い、発注点・リードタイム・配送曜日は扱いません。
+最低購入package数は既存の `minimumPurchaseLot` を「1回の発注で最低何package購入するか」として利用します。従来計算は当日不足時購入、Phase 8はResource別Lead TimeとLookaheadを扱います。仕入先別条件・配送曜日は扱いません。
 
 ### FIFOと賞味期限
 
@@ -235,6 +248,27 @@ Phase 3の新規サンプルは揚げ油設定を18L / 6,840円のResourceへ接
 期間内の日付を1日ずつ進め、対応する曜日が営業の場合だけ `mealsPerDay`、営業日固定費、日次仕込みを計上します。期間総営業時間は各営業日の `closingTime - openingTime` の合計で、営業時間比例費用、人件費、1営業時間あたり利益へ反映します。開始日が休業日の1日表示は営業日数・販売数・営業由来変動費が0です。休業日にも発生する `alwaysOn` と月固定費は暦日相当分が残ります。
 
 月末日からcalendar monthsを加算して存在しない日付になる場合は対象月の末日に丸めます。3 / 6 / 12か月の月固定費はそれぞれ正確に3 / 6 / 12か月分、1日と30日は含まれる各月の日数で日割りします。
+
+### Phase 8 複数日運営計画
+
+[src/calculations/multiDayEngine.ts](src/calculations/multiDayEngine.ts) は、旧期間集計の単純な日次結果の集約とは別に、各日のClosing Stateを翌日のOpening Stateへ渡します。日付ごとにBase → 曜日Template → 特定日Overrideの順で営業時間、需要、Staff、Manual Prepを解決し、休業日も賞味期限と入荷日を進めます。
+
+```text
+Day N Opening Lots + 当日入荷 + 当日生産 + 副産物
+                  - FIFO使用 - spoilage
+                  = Day N Closing Lots
+                  = Day N+1 Opening Lots
+```
+
+Resourceごとの`procurementLeadTimeDays = 0`はPhase 3互換の同日購入・使用です。1日以上なら発注日に不足を埋めず、`deliveryDate`までPending Orderとして保持し、入荷日に購入Lotへ変換します。簡易現金収支の購入支出も入荷日に計上します。自動発注は、現在庫と入荷予定を、設定済み需要の`procurementLookaheadDays`分と比較し、既存package量・歩留まり・`minimumPurchaseLot`で切り上げます。これは需要予測ではありません。
+
+Processの`prepLookaheadDays`は、設定済みの将来需要をまとめて既存Process / batch Engineへ渡します。対象Outputの保存可能日数を超える先読みは`min(prepLookaheadDays, shelfLifeDays - 1)`へ制限します。日付OverrideのManual Prepは明示batch数として追加できます。仕込み人件費は生産日の`activeLaborMinutes`とPhase 2の`withinScheduledShift / additionalLabor`区分をそのまま使用します。1日active仕込み上限は現在Validation・比較用の計画値で、強制スケジューリング制約ではありません。
+
+食材制約は日単位近似です。まず客席・厨房Engineが完了可能なMenu Orderを決め、その順序のFIFO prefixについて既存Inventory Engineを再実行し、在庫で提供できる最大食数を求めます。不足分は負在庫にせず、stockout Resource、失注Menu、失注食数・売上として分離します。分単位の食材払出しや、品切れ後に別Menuへ振り替える行動は扱いません。
+
+複数日Monte Carloは`hash(baseSeed, runIndex, dayIndex)`でrunと日を分離します。同じPlan・Horizon・baseSeedなら再現でき、候補間は同じrun/day seed集合を使えます。期間売上、営業利益、簡易現金収支、廃棄、stockout日数・失注、待ち時間、期末在庫についてmean / median / p10 / p90等を集計し、赤字期間率を表示します。
+
+複数日Optimizationは候補Planを日別に分解して足し合わせず、各候補をHorizon末まで連続Simulationします。`maximizeMeanPeriodProfit / maximizeP10PeriodProfit / minimizePeriodWaste / minimizeStockoutLoss`と、期間廃棄・欠品失注・購入支出・期末在庫Constraintを既存Rankingへ接続します。Pareto軸は利益対待ち時間、利益対廃棄、利益対stockout失注から選べます。30日または大きなMonte Carlo探索は計算量が大きいためWarning対象です。
 
 ### 利益指標
 
@@ -322,7 +356,7 @@ Scenario比較はBaseと各Scenarioの同じrun indexへ同じseedを渡しま�
 
 ### 制約付きOptimization・Pareto
 
-[src/calculations/optimizationEngine.ts](src/calculations/optimizationEngine.ts) は新しい利益・Queue計算式を持たず、候補Overrideを既存Scenario適用機構へ渡し、Economic / Capacity / Demand / Seating / Monte Carlo Engineで評価します。評価期間はCapacity画面と同じ1営業日で、利益・人件費・Realized Salesは日次指標です。探索は非線形なFIFO、バッチ、購入package、Queue、離脱を線形化せず、離散候補のCartesian productを全列挙するExhaustive Searchです。
+[src/calculations/optimizationEngine.ts](src/calculations/optimizationEngine.ts) は新しい利益・Queue計算式を持たず、候補Overrideを既存Scenario適用機構へ渡し、Economic / Capacity / Demand / Seating / Monte Carlo / MultiDay Engineで評価します。評価単位は1日、7日、14日、30日を選べます。探索は非線形なFIFO、バッチ、購入package、Queue、離脱を線形化せず、離散候補のCartesian productを全列挙するExhaustive Searchです。
 
 ```text
 Variable候補集合
@@ -340,12 +374,16 @@ Objectiveの意味は次のとおりです。
 - `minimizeAverageWait`: 平均厨房待ち時間を最小化します。
 - `minimizeLaborCost`: Capacity StaffShiftの`時給 × Shift時間 × headcount`を最小化します。
 - `maximizeRealizedSales`: 客席離脱とKitchen Workflow完了を反映した提供食数を最大化します。
+- `maximizeMeanPeriodProfit`: 連続したPlanning Horizonの期間利益を最大化します。
+- `maximizeP10PeriodProfit`: 複数日Monte Carloのp10期間利益を最大化します。
+- `minimizePeriodWaste`: 期間廃棄原価を最小化します。
+- `minimizeStockoutLoss`: stockout失注売上を最小化します。
 
 Constraintは最大人件費、最小平均 / p10利益、最大平均 / p90厨房待ち、最大離脱率、最小Realized Sales / Service Level、最大Staff人数・総座席数・閉店後処理時間を扱います。`feasible`は全Constraintを満たす候補です。Feasible候補が0件なら、各違反量を`違反量 / max(1, |基準値|)`で正規化して合計し、最も条件へ近い候補を表示します。Constraint境界から5%以内は「ぎりぎり」の確認候補として表示します。
 
-Monte Carlo評価は全候補へ`baseSeed + runIndex`の同じseed集合を適用するCommon Random Numbers方式です。候補間の差を別々の需要乱数で汚さず、平均利益とp10利益を同じ来店サンプルで比較します。Optimization画面は入力変更で自動実行せず、明示的な実行ボタン、候補進捗、キャンセルを持ちます。初期上限は10,000候補、hard limitは50,000候補で、上限超過時に勝手な間引きはしません。
+Monte Carlo評価は全候補へ同じseed集合を適用するCommon Random Numbers方式です。1日評価は`baseSeed + runIndex`、複数日評価は`hash(baseSeed, runIndex, dayIndex)`を使い、候補間の差を別々の需要乱数で汚さず、平均利益とp10利益を同じ来店サンプルで比較します。Optimization画面は入力変更で自動実行せず、明示的な実行ボタン、候補進捗、キャンセルを持ちます。初期上限は10,000候補、hard limitは50,000候補で、上限超過時に勝手な間引きはしません。
 
-Pareto判定は、候補Aが候補Bに対して`平均営業利益 >= B`かつ`p90厨房待ち <= B`で、少なくとも片方が厳密に優れる場合にAがBをdominateすると定義します。dominateされない候補をPareto Frontierへ残すため、利益最大だけでなく、利益を少し譲って待ち時間を短くする候補も比較できます。最上位候補がVariable候補の最小値・最大値にある場合は境界解として明示し、探索範囲外で改善する可能性を隠しません。
+Pareto判定は、候補Aが候補Bに対して`期間利益 >= B`かつ選択した負担指標（p90待ち、廃棄原価、stockout失注）`<= B`で、少なくとも片方が厳密に優れる場合にAがBをdominateすると定義します。dominateされない候補をPareto Frontierへ残すため、利益最大だけでなく、利益を少し譲って待ち・廃棄・欠品を減らす候補も比較できます。最上位候補がVariable候補の最小値・最大値にある場合は境界解として明示し、探索範囲外で改善する可能性を隠しません。
 
 Staff人数候補はCapacity処理能力とStaffShift人件費の両方、Equipment容量は処理能力、SeatingUnit卓数は着席・離脱・総席数へ反映します。開閉店候補は曜日別営業時間へ適用し、営業時間外になったStaffShift部分を切り詰めます。延長時にShiftを自動延長はしません。短縮区間の需要は失われます。延長区間を覆うDemand / Arrival Profileがない候補は警告を付けるため、明示的な需要0を含むProfileを設定するまで結果を需要0の断定として解釈しないでください。
 
@@ -391,13 +429,18 @@ Inventory消費は引き続き分単位同期ではなく日次集計です。�
 12. Realized Salesは来店・着席・注文ではなく、Kitchen Workflowを完了したOrderだけを売上計上します。
 13. Optimizationは候補生成・Constraint・Rankingだけを担当し、利益、使用原価、購入支出、Capacity、離脱、Monte Carloの定義を変更しません。
 14. 販売価格、潜在需要、Party構成、原材料市場価格、Actualは自動探索しません。需要弾力性・将来予測がない状態で動かすと意味のない「最適値」になり得るためです。
-15. Monte Carlo Optimizationは全候補に共通seed集合を使用し、平均Objectiveとp10 Objectiveを分けます。Paretoは平均営業利益とp90厨房待ちの二軸で判定します。
+15. Monte Carlo Optimizationは全候補に共通seed集合を使用し、平均Objectiveとp10 Objectiveを分けます。Paretoは利益に対するp90待ち・廃棄・stockout失注の選択軸で判定します。
+16. Phase 8の期間利益は日別営業利益の合計、在庫価額はHorizon末Lotの取得原価合計です。購入支出は発注日ではなく入荷日、stockout失注は厨房完了候補から在庫制約で提供できなかったMenu価格の合計です。
+17. 1日Horizonも同じEconomic / Inventory / Capacity Engineを通るためPhase 7の日次結果と同じ定義です。複数日は各日の独立最適値を足さず、Lot・Pending Orderを連続して評価します。
+18. Phase 8は与えられた曜日・日付Demandだけを使い、需要予測・天候補正・自動AI最適化を行いません。
 
 ### Validationと計算詳細
 
 DashboardはErrorとWarningを分けて表示します。Errorは存在しないResource / Output / Lot参照、単位不整合、負の在庫、Process循環、0以下の購入package・最低購入数・バッチ・Output数量、不正な歩留まり・価格・営業時間・原価配賦率などです。Capacityではさらに、0以下のEquipment容量・工程時間・バッチ容量、不正なactive時間・設備占有、存在しないEquipment / LaborRole / Workflow依存、営業時間外StaffShift、負の人数、Workflow循環をErrorにします。Phase 6では不正なArrival範囲、Party人数・確率、客席容量・卓数、注文遅延・滞在・最大席待ち、Monte Carlo run数も検証します。Phase 7では空のVariable候補、min > max、step <= 0、不存在target、不正候補値・Constraint、p10 Objectiveのdeterministic指定、候補hard limit超過をErrorにします。WarningはDemandProfile / Party確率合計不一致、営業時間外Arrival、0来店・0席、必要Shiftなし、初期参考値、利用率や離脱率・空席損失、候補数・Monte Carlo run数の不足、未設定の設備変更コストなどです。
 
-「計算詳細・検算内訳」では、従来のメニュー、Process、水道光熱に加え、Resource / Output別の期首、購入、内製、副産物、使用、廃棄、期末、使用原価、購入支出を確認できます。在庫・仕入画面では仕入履歴、廃棄理由、日次在庫推移、期末Lotを追跡できます。
+Phase 8ではさらに、負のLead Time / Prep・Procurement Lookahead、0以下のHorizon、366日超、入荷日が発注日より前の注文、不存在Resource注文、不正なDaily OverrideをErrorにします。Lead TimeがLookaheadを超える、Prep Lookaheadが保存期限以上、Horizon後入荷、30日Monte Carlo / OptimizationはWarningです。
+
+「計算詳細・検算内訳」では、従来のメニュー、Process、水道光熱に加え、Resource / Output別の期首、購入、内製、副産物、使用、廃棄、期末、使用原価、購入支出を確認できます。在庫・仕入画面では仕入履歴、廃棄理由、日次在庫推移、期末Lotを追跡できます。運営計画画面では日別損益、Inventory / Prep / Procurement Timeline、Pending Order、stockoutを追跡できます。
 
 ## 初期参考価格について
 
@@ -414,8 +457,8 @@ Party人数（1人40%、2人40%、3人10%、4人8%、5人2%）、カウンター
 ## 保存とJSON
 
 - localStorage key: `sobaops.settings.v1`
-- current schema: `schemaVersion: 7`
-- v1〜v6のlocalStorageとExport JSONは読み込み時にv7へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では既存Menuごとの標準Workflow、汎用調理台・標準提供工程、既存LaborRole由来のStaffShift、`mealsPerDay`と一致するDemandProfileを補います。v5 → v6では既存Capacity設定を保持したまま`demandMode: 'deterministic'`を既定にし、Arrival、Party人数分布、客席、注文遅延、滞在、最大席待ち、Monte Carlo設定を安全な初期参考値として追加します。v6 → v7では既存設定を変更せず`optimizationStudies: []`を追加します。
+- current schema: `schemaVersion: 8`
+- v1〜v7のlocalStorageとExport JSONは読み込み時にv8へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では既存Menuごとの標準Workflow、汎用調理台・標準提供工程、既存LaborRole由来のStaffShift、`mealsPerDay`と一致するDemandProfileを補います。v5 → v6では既存Capacity設定を保持したまま`demandMode: 'deterministic'`を既定にし、Arrival、Party人数分布、客席、注文遅延、滞在、最大席待ち、Monte Carlo設定を追加します。v6 → v7では`optimizationStudies: []`を追加します。v7 → v8では`planning`、7日Horizon、曜日Template、空のDaily Override / Purchase Order、Resource Lead Time 0、Process / Procurement Lookahead 0、Optimization Horizon 1日を補います。
 - 新規サンプルの仕込み工程は実態に合わせて `withinScheduledShift` です。そのためサンプルへリセットすると、v1サンプルのような仕込み人件費の二重加算は行いません。
 - localStorage keyは既存データを発見するため意図的に `sobaops.settings.v1` のままです。保存されるJSONのschemaVersionとは別です。
 - Import時に最低限の構造とschemaVersionを検証し、計算設定の詳細は画面上のValidationで確認できます。
@@ -425,7 +468,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 
 ## テスト
 
-[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/seatingEngine.test.ts](src/calculations/seatingEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/optimizationEngine.test.ts](src/calculations/optimizationEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) で次を検証しています。
+[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/multiDayEngine.test.ts](src/calculations/multiDayEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/optimizationEngine.test.ts](src/calculations/optimizationEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) の233件で次を検証しています。
 
 - 歩留まりと実質単価
 - 1食分の原材料費
@@ -439,7 +482,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 不存在Source、Process循環のValidation
 - schemaVersion v1 → v2移行
 - schemaVersion v2 → v3移行
-- schemaVersion v3 → v4、v4 → v5、v5 → v6、v6 → v7、およびv1 → v7連続移行
+- schemaVersion v3 → v4、v4 → v5、v5 → v6、v6 → v7、v7 → v8、およびv1 → v8連続移行
 - 揚げ油交換周期
 - 内製 vs 既製品比較とROI
 - FIFO、複数取得価格Lot、購入package、最低購入数
@@ -472,12 +515,19 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - Pareto dominance、dominated除外、複数trade-off候補
 - 境界解、Feasible 0件時の最小違反候補、設備投資回収日数
 - Optimization候補のScenario化とBase非破壊、Phase 7 Validation
+- Day1期末Lot → Day2期首、複数価格LotのFIFO、休業日の期限進行と期間Inventory Equation
+- バッチ余剰、prepLookahead、保存期限による先読み制限、休業日仕込み停止、Manual Prep
+- Lead Time 0 / 1 / 2、Pending Order、delivery Lot、minimum package、procurementLookahead
+- 負在庫防止、stockout Resource、失注食数・失注売上、Horizon後Pending
+- 複数日売上・使用原価・購入支出・期末在庫・spoilage、曜日 / 日付 / 休業Override
+- run/day seed再現性、p10期間利益、赤字期間率、複数日Objective・Lookahead Variable・廃棄Pareto
+- schemaVersion v7 → v8、およびv1 → v8連続migration
 
 ## ディレクトリ構成
 
 ```text
 src/
-  calculations/   # UI非依存の損益・在庫・意思決定・Capacity・Demand・Seating・Monte Carlo・Optimization Engineとテスト
+  calculations/   # UI非依存の損益・在庫・複数日計画・Capacity・Demand・Seating・Monte Carlo・Optimization Engineとテスト
   components/     # Dashboard、編集画面、グラフ、UI部品
   data/           # 初回サンプル店舗
   models/         # 中心データ型
@@ -488,16 +538,17 @@ src/
 
 ## 現時点で未実装の拡張候補
 
-- 発注点・目標在庫、仕入先別リードタイム、配送曜日、発注提案
+- 発注点・目標在庫の高度化、仕入先別条件、配送曜日、発注承認Workflow
 - 売掛・買掛、カード入金サイト、税を含む正式なキャッシュフロー
 - 棚卸差異、実地棚卸、ロットの手動入出庫帳簿
 - 個・枚・本などの品目別換算係数
 - 祝日・臨時休業を扱う実カレンダー
 - 予約、テーブル結合、Party分割、相席、待ち時間に応じた確率離脱
 - Menu別の注文遅延・滞在時間、厨房工程時間のランダム化、デリバリー注文
-- 分単位Inventory同期、食材欠品によるメニュー停止、閉店後残業割増
-- 二段階探索、Web Worker、候補結果Cache、内製 / 既製品比率・仕込み量のOptimization
-- 面積・設備設置制約、正式な設備減価償却、複数Pareto軸のUI切替、自動最適化
+- 分単位Inventory同期、同日中の品切れ時刻・代替Menu選択、閉店後残業割増
+- 二段階探索、Web Worker、候補結果Cache、内製 / 既製品比率・特定日仕込みbatchのOptimization
+- 面積・設備設置制約、正式な設備減価償却、自動最適化
+- 仕入先比較、配送リードタイム分布、買掛・支払サイト、月換算回収期間の精緻化
 - 詳細な未販売・期限切れ・作業ミス廃棄入力
 - ActualのCSV / POS / 請求書 / 会計ソフトImport、実績から設定への確認付き適用
 - 任意の感度変化率、複数パラメータ同時感度、メニュー構成・内製比率感度

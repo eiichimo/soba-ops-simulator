@@ -2,10 +2,11 @@ import { createSampleSettings } from '../data/sampleData'
 import { createDefaultCapacitySettings } from '../data/capacityDefaults'
 import { createDefaultStochasticDemand } from '../data/demandDefaults'
 import { todayLocalDate } from '../calculations/calendar'
+import { createDefaultPlanningSettings } from '../data/planningDefaults'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 7
+export const CURRENT_SCHEMA_VERSION = 8
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -21,6 +22,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && (candidate.schemaVersion < 5 || !!candidate.capacity)
     && (candidate.schemaVersion < 6 || (!!candidate.capacity?.stochasticDemand && !!candidate.capacity?.demandMode))
     && (candidate.schemaVersion < 7 || Array.isArray(candidate.optimizationStudies))
+    && (candidate.schemaVersion < 8 || !!candidate.planning)
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -100,6 +102,26 @@ export const migrateV6ToV7 = (settings: AppSettings): AppSettings => ({
   optimizationStudies: settings.optimizationStudies ?? [],
 })
 
+export const migrateV7ToV8 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 8,
+  resources: settings.resources.map((resource) => ({
+    ...resource,
+    procurementLeadTimeDays: resource.procurementLeadTimeDays ?? 0,
+    procurementLookaheadDays: resource.procurementLookaheadDays ?? 0,
+  })),
+  processes: settings.processes.map((process) => ({
+    ...process,
+    prepLookaheadDays: process.prepLookaheadDays ?? 0,
+  })),
+  optimizationStudies: (settings.optimizationStudies ?? []).map((study) => ({
+    ...study,
+    planningHorizonDays: study.planningHorizonDays ?? 1,
+    paretoMetric: study.paretoMetric ?? 'profitWait',
+  })),
+  planning: settings.planning ?? createDefaultPlanningSettings(settings.business),
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
@@ -108,6 +130,7 @@ export const migrateSettings = (settings: AppSettings): AppSettings => {
   if (migrated.schemaVersion === 4) migrated = migrateV4ToV5(migrated)
   if (migrated.schemaVersion === 5) migrated = migrateV5ToV6(migrated)
   if (migrated.schemaVersion === 6) migrated = migrateV6ToV7(migrated)
+  if (migrated.schemaVersion === 7) migrated = migrateV7ToV8(migrated)
   return migrated
 }
 

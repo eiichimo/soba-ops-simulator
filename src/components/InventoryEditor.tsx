@@ -104,6 +104,6 @@ export const InventoryEditor = ({ settings, onChange }: Props) => {
       </Panel>
     </div>
 
-    <div className="calculation-note"><Icon name="info" size={17}/><span>営業利益は販売へ払い出した使用原価を基準にし、購入支出は購入日に全額を簡易現金収支へ反映します。そのため期末在庫が残る期間では両者が一致しません。</span></div>
+    <div className="calculation-note"><Icon name="info" size={17}/><span>営業利益は販売へ払い出した使用原価を基準にし、購入支出は入荷日に全額を簡易現金収支へ反映します。そのため期末在庫が残る期間では両者が一致しません。</span></div>
   </>
 }

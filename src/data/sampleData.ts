@@ -2,6 +2,7 @@ import type { AppSettings, Resource, SourceRef, Unit } from '../models/types'
 import { todayLocalDate } from '../calculations/calendar'
 import { createSampleCapacitySettings } from './capacityDefaults'
 import { createSampleOptimizationStudy } from './optimizationDefaults'
+import { createDefaultPlanningSettings } from './planningDefaults'
 
 const resource = (
   id: string,
@@ -24,6 +25,8 @@ const resource = (
   storageType: 'refrigerated',
   shelfLifeDays: 7,
   minimumPurchaseLot: 1,
+  procurementLeadTimeDays: 0,
+  procurementLookaheadDays: 0,
   priceStandard: purchasePrice,
   isReferencePrice: true,
   ...options,
@@ -36,9 +39,8 @@ const input = (sourceType: SourceRef['sourceType'], sourceId: string, quantity: 
   unit,
 })
 
-export const createSampleSettings = (): AppSettings => ({
-  schemaVersion: 7,
-  business: {
+export const createSampleSettings = (): AppSettings => {
+  const business: AppSettings['business'] = {
     storeName: '手打ちそば みのり（サンプル）',
     mealsPerDay: 100,
     openingTime: '11:00',
@@ -52,7 +54,10 @@ export const createSampleSettings = (): AppSettings => ({
       openingTime: '11:00',
       closingTime: '20:00',
     })),
-  },
+  }
+  return ({
+  schemaVersion: 8,
+  business,
   resources: [
     resource('raw-soba', '生そば', 'noodle', 1_000, 'g', 750, 0.98, { shelfLifeDays: 3 }),
     resource('long-onion', '長ねぎ', 'produce', 1_000, 'g', 600, 0.9, { shelfLifeDays: 5 }),
@@ -70,7 +75,7 @@ export const createSampleSettings = (): AppSettings => ({
     resource('prepared-kaeshi', '既製かえし', 'prepared', 1, 'L', 800, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('bonito', 'かつお節', 'seasoning', 1_000, 'g', 3_500, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('kombu', '昆布', 'seasoning', 1_000, 'g', 4_000, 1, { storageType: 'ambient', shelfLifeDays: 365 }),
-    resource('shrimp', '海老', 'seafood', 40, '本', 4_000, 1, { storageType: 'frozen', shelfLifeDays: 90 }),
+    resource('shrimp', '海老', 'seafood', 40, '本', 4_000, 1, { storageType: 'frozen', shelfLifeDays: 90, procurementLeadTimeDays: 2, procurementLookaheadDays: 3 }),
     resource('flour', '小麦粉', 'seasoning', 1_000, 'g', 300, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
     resource('frying-oil-resource', '揚げ油（工程投入）', 'oil', 18, 'L', 6_840, 1, { storageType: 'ambient', shelfLifeDays: 180 }),
   ],
@@ -90,6 +95,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 2,
       wasteRate: 0.02,
       wasteReason: 'cookingLoss',
+      prepLookaheadDays: 3,
     },
     {
       id: 'store-kaeshi-process',
@@ -106,6 +112,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 1,
       wasteRate: 0.01,
       wasteReason: 'cookingLoss',
+      prepLookaheadDays: 2,
     },
     {
       id: 'chopped-onion-process',
@@ -122,6 +129,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 5,
       wasteRate: 0.1,
       wasteReason: 'trimLoss',
+      prepLookaheadDays: 0,
     },
     {
       id: 'cold-tsuyu-process',
@@ -138,6 +146,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 4.3,
       wasteRate: 0.03,
       wasteReason: 'cookingLoss',
+      prepLookaheadDays: 1,
     },
     {
       id: 'hot-tsuyu-process',
@@ -154,6 +163,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 4.7,
       wasteRate: 0.03,
       wasteReason: 'cookingLoss',
+      prepLookaheadDays: 1,
     },
     {
       id: 'shrimp-tempura-process',
@@ -173,6 +183,7 @@ export const createSampleSettings = (): AppSettings => ({
       waterUsageL: 2,
       wasteRate: 0.04,
       wasteReason: 'cookingLoss',
+      prepLookaheadDays: 0,
     },
   ],
   menuItems: [
@@ -267,6 +278,8 @@ export const createSampleSettings = (): AppSettings => ({
   scenarios: [],
   capacity: createSampleCapacitySettings(),
   optimizationStudies: [createSampleOptimizationStudy()],
-})
+  planning: createDefaultPlanningSettings(business),
+  })
+}
 
 export const sampleSettings = createSampleSettings()

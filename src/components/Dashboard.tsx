@@ -136,7 +136,7 @@ export const Dashboard = ({ settings, period, onPeriodChange }: { settings: AppS
       <div className="cash"><span>簡易現金収支</span><strong>{formatYen(result.inventory.simpleCashFlow)}</strong><small>正式なCFではありません</small></div>
     </div>
 
-    <div className="cash-flow-note"><Icon name="info" size={18}/><p><strong>利益と現金の差</strong><span>営業利益は使用した在庫価額を費用とし、簡易現金収支は購入日にpackage代金を全額支出します。期末在庫が残ると両者に差が生じます。</span></p><b>{formatYen(result.inventory.simpleCashFlow - result.operatingProfit)}</b></div>
+    <div className="cash-flow-note"><Icon name="info" size={18}/><p><strong>利益と現金の差</strong><span>営業利益は使用した在庫価額を費用とし、簡易現金収支はpackage入荷時に代金を全額支出します。期末在庫が残ると両者に差が生じます。</span></p><b>{formatYen(result.inventory.simpleCashFlow - result.operatingProfit)}</b></div>
 
     <div className="dashboard-grid">
       <Panel className="chart-panel" title="販売食数と採算ライン" caption="日次の営業利益と、固定費を含む1食平均原価">

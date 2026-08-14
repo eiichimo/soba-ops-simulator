@@ -184,7 +184,7 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
   return <>
     <PageTitle eyebrow="RESOURCES" title="原材料・既製品" description="購入パッケージ量・価格、歩留まり、最低購入パッケージ数を管理します。表示単価は利用可能量を基準にしています。" actions={<Button variant="primary" onClick={() => onChange({ ...settings, resources: [...settings.resources, {
       id: uniqueId('resource'), name: '新しい原材料', category: 'other', purchaseQuantity: 1, purchaseUnit: '個', purchasePrice: 0, yieldRate: 1, usableQuantity: 1,
-      storageType: 'refrigerated', shelfLifeDays: 7, minimumPurchaseLot: 1, isReferencePrice: false,
+      storageType: 'refrigerated', shelfLifeDays: 7, minimumPurchaseLot: 1, procurementLeadTimeDays: 0, procurementLookaheadDays: 0, isReferencePrice: false,
     }] })}>＋ 原材料を追加</Button>} />
     <div className="filter-row">
       <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>すべて <span>{settings.resources.length}</span></button>
@@ -192,7 +192,7 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
     </div>
     <Panel className="table-panel">
       <div className="resource-table-wrap"><table className="resource-table">
-        <thead><tr><th>原材料</th><th>分類</th><th>購入package</th><th>package価格</th><th>歩留まり</th><th>使用単価</th><th>保存</th><th>最低購入数</th><th /></tr></thead>
+        <thead><tr><th>原材料</th><th>分類</th><th>購入package</th><th>package価格</th><th>歩留まり</th><th>使用単価</th><th>保存</th><th>最低購入数</th><th>Lead / 発注先読み</th><th /></tr></thead>
         <tbody>{visible.map((resource) => <tr key={resource.id}>
           <td><input className="table-name-input" value={resource.name} onChange={(event) => updateResource(resource.id, { name: event.target.value })}/>{resource.isReferencePrice && <small className="reference-note">初期参考値</small>}</td>
           <td><select value={resource.category} onChange={(event) => updateResource(resource.id, { category: event.target.value as ResourceCategory })}>{Object.entries(categoryNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></td>
@@ -202,11 +202,12 @@ export const ResourcesEditor = ({ settings, onChange }: EditorProps) => {
           <td><strong>{formatUnitPrice(getResourceUnitCost(settings, resource.id))}</strong><small> / {resource.purchaseUnit}</small></td>
           <td><select value={resource.storageType} onChange={(event) => updateResource(resource.id, { storageType: event.target.value as Resource['storageType'] })}>{Object.entries(storageNames).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select><span className="table-input-group shelf-life"><input aria-label="保存日数" type="number" min="0" value={resource.shelfLifeDays} onChange={(event) => updateResource(resource.id, { shelfLifeDays: numberValue(event.target.value) })}/><span>日</span></span></td>
           <td><div className="table-input-group narrow"><input type="number" step="1" min="1" value={resource.minimumPurchaseLot} onChange={(event) => updateResource(resource.id, { minimumPurchaseLot: numberValue(event.target.value) })}/><span>個</span></div></td>
+          <td><div className="table-input-group narrow"><input aria-label={`${resource.name} Lead Time`} type="number" min="0" value={resource.procurementLeadTimeDays ?? 0} onChange={(event) => updateResource(resource.id, { procurementLeadTimeDays: numberValue(event.target.value) })}/><span>日 /</span><input aria-label={`${resource.name} 発注Lookahead`} type="number" min="0" value={resource.procurementLookaheadDays ?? 0} onChange={(event) => updateResource(resource.id, { procurementLookaheadDays: numberValue(event.target.value) })}/><span>日</span></div></td>
           <td><button className="icon-button danger" title="削除" onClick={() => onChange({ ...settings, resources: settings.resources.filter((item) => item.id !== resource.id) })}>×</button></td>
         </tr>)}</tbody>
       </table></div>
     </Panel>
-    <div className="calculation-note"><Icon name="info" size={17}/><span>使用単価 = package価格 ÷（package量 × 歩留まり）。在庫不足時はpackage単位かつ最低購入数以上で仕入れ、購入日に支出を記録します。</span></div>
+    <div className="calculation-note"><Icon name="info" size={17}/><span>使用単価 = package価格 ÷（package量 × 歩留まり）。在庫不足時はpackage単位かつ最低購入数以上で仕入れ、入荷日に支出を記録します。</span></div>
   </>
 }
 
@@ -233,6 +234,7 @@ export const ProcessesEditor = ({ settings, onChange }: EditorProps) => {
         waterUsageL: 0,
         wasteRate: 0,
         wasteReason: 'cookingLoss',
+        prepLookaheadDays: 0,
       }] })
     }}>＋ 工程を追加</Button>} />
     {processErrors.length > 0 && <div className="alert error"><Icon name="info" size={18}/><span><b>計算できない工程設定が{processErrors.length}件あります。</b><br/>{processErrors.slice(0, 3).map((validationIssue) => validationIssue.message).join(' / ')}</span></div>}
@@ -259,6 +261,7 @@ export const ProcessesEditor = ({ settings, onChange }: EditorProps) => {
                 <option value="additionalLabor">追加勤務（総人件費へ加算）</option>
               </SelectField>
               <NumberField label="廃棄・ロス率" suffix="%" min={0} max={100} value={process.wasteRate * 100} onChange={(event) => updateProcess(process.id, { wasteRate: numberValue(event.target.value) / 100 })}/>
+              <NumberField label="仕込みLookahead" suffix="日" min={0} value={process.prepLookaheadDays ?? 0} onChange={(event) => updateProcess(process.id, { prepLookaheadDays: numberValue(event.target.value) })}/>
               <SelectField label="廃棄理由" value={process.wasteReason} onChange={(event) => updateProcess(process.id, { wasteReason: event.target.value as Process['wasteReason'] })}>
                 <option value="trimLoss">下処理ロス</option><option value="cookingLoss">調理ロス</option><option value="spoilage">期限切れ</option><option value="unsold">売れ残り</option><option value="mistake">作業ミス</option>
               </SelectField>
@@ -441,7 +444,7 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
     <PageTitle eyebrow="DATA & BACKUP" title="データ管理" description="設定はこのブラウザに自動保存されます。JSONでバックアップ・移行できます。" />
     {message && <div className={`alert ${message.type}`}><Icon name="info" size={18}/><span>{message.text}</span></div>}
     <div className="data-action-grid">
-      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績、Scenario、厨房能力、来店・客席・Monte Carlo、Optimization Study集計を1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
+      <article><span className="data-icon"><Icon name="data" size={26}/></span><h2>Export JSON</h2><p>店舗設定、在庫、実績、Scenario、厨房能力、来店・客席、複数日運営計画、発注、Optimization Study集計を1つのJSONファイルに保存します。</p><Button variant="primary" onClick={onExport}>設定を書き出す</Button></article>
       <article><span className="data-icon import"><Icon name="data" size={26}/></span><h2>Import JSON</h2><p>SobaOpsから書き出した設定を読み込みます。現在の設定は上書きされます。</p><input ref={fileInput} type="file" accept="application/json,.json" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) onImport(file); event.target.value = '' }}/><Button onClick={() => fileInput.current?.click()}>ファイルを選択</Button></article>
       <article><span className="data-icon reset"><Icon name="store" size={26}/></span><h2>サンプルへ戻す</h2><p>入力内容を破棄し、初回起動時のサンプル蕎麦店データを復元します。</p><Button variant="danger" onClick={onReset}>初期状態へリセット</Button></article>
     </div>
@@ -460,6 +463,8 @@ export const DataManager = ({ settings, onExport, onImport, onReset, message }: 
         <div><span>Arrival slots</span><strong>{settings.capacity.stochasticDemand.arrivalProfile.slots.length}</strong></div>
         <div><span>Seating units</span><strong>{settings.capacity.stochasticDemand.seatingUnits.length}</strong></div>
         <div><span>Optimization studies</span><strong>{settings.optimizationStudies.length}</strong></div>
+        <div><span>Daily plans</span><strong>{settings.planning.dailyOperatingPlans.length}</strong></div>
+        <div><span>Purchase orders</span><strong>{settings.planning.purchaseOrders.length}</strong></div>
       </div>
       <details className="json-preview"><summary>JSONプレビュー</summary><pre>{JSON.stringify(settings, null, 2)}</pre></details>
     </Panel>

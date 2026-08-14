@@ -298,6 +298,11 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
     resources: settings.resources.map((resource) => ({
       ...resource,
       purchasePrice: resource.purchasePrice * (overrides.resourcePurchasePriceMultipliers?.[resource.id] ?? 1),
+      procurementLookaheadDays: overrides.resourceProcurementLookaheadDaysOverrides?.[resource.id] ?? resource.procurementLookaheadDays,
+    })),
+    processes: settings.processes.map((process) => ({
+      ...process,
+      prepLookaheadDays: overrides.processPrepLookaheadDaysOverrides?.[process.id] ?? process.prepLookaheadDays,
     })),
     utilities: {
       water: { ...settings.utilities.water, unitPrice: settings.utilities.water.unitPrice * (overrides.utilityUnitPriceMultipliers?.water ?? 1) },
@@ -339,6 +344,18 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
           count: overrides.seatingUnitCountOverrides?.[unit.id] ?? unit.count,
         })),
       },
+    },
+    planning: {
+      ...settings.planning,
+      weekdayTemplates: settings.planning.weekdayTemplates.map((template) => ({
+        ...template,
+        openingTime: overrides.weekdayOpeningTimeOverrides?.[String(template.day)] ?? template.openingTime,
+        closingTime: overrides.weekdayClosingTimeOverrides?.[String(template.day)] ?? template.closingTime,
+        staffHeadcountOverrides: settings.capacity.staffShifts.reduce((map, shift) => ({
+          ...map,
+          [shift.id]: overrides.weekdayStaffHeadcountOverrides?.[`${template.day}:${shift.id}`] ?? template.staffHeadcountOverrides?.[shift.id] ?? shift.headcount,
+        }), {} as Record<string, number>),
+      })),
     },
   }
   if (overrides.business?.hoursPerDay !== undefined) result = settingsWithHours(result, overrides.business.hoursPerDay)

@@ -617,6 +617,13 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
 .candidate-detail-grid p small { color: var(--green-2); font-size: 7px; }
 .constraint-violation-list { margin-top: 12px; padding: 13px; border-radius: 9px; background: #f8eee7; }
 .constraint-violation-list p { margin: 6px 0 0; display: flex; align-items: center; gap: 8px; color: #76594a; font-size: 8px; }
+.planning-weekday-grid { grid-template-columns: repeat(4, minmax(155px, 1fr)); }
+.planning-weekday-grid .weekday-card { min-height: 155px; }
+.mini-field { margin-top: 7px; display: grid; grid-template-columns: 1fr 55px auto; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; }
+.mini-field input { min-width: 0; padding: 5px 6px; }
+.planning-override-list { display: grid; gap: 8px; }
+.planning-summary { grid-template-columns: repeat(3, 1fr); }
+.planning-summary .negative { color: var(--red); }
 
 @media (max-width: 1180px) {
   .app-shell { grid-template-columns: 215px minmax(0, 1fr); }
@@ -634,6 +641,7 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
   .optimization-variable-list { grid-template-columns: 1fr; }
   .optimization-summary-grid { grid-template-columns: repeat(3, 1fr); }
   .candidate-detail-grid { grid-template-columns: 1fr 1fr; }
+  .planning-weekday-grid { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 900px) {
@@ -740,4 +748,5 @@ main { width: 100%; max-width: 1500px; min-height: calc(100vh - 54px); margin: 0
   .optimization-filter { width: 100%; }
   .optimization-filter button { flex: 1; }
   .optimization-recommendation { align-items: flex-start; flex-direction: column; }
+  .planning-weekday-grid { grid-template-columns: 1fr 1fr; }
 }
