@@ -295,4 +295,41 @@ describe('settings validation', () => {
     const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
     expect(codes).toEqual(expect.arrayContaining(['invalid-planning-monte-carlo-runs', 'invalid-planning-prep-capacity', 'invalid-daily-override']))
   })
+
+  it('Phase 9のActual Role・Waste・Inventory参照と単位を検証する', () => {
+    const settings = createSampleSettings()
+    settings.actualPeriods = [{ id: 'actual', name: '実績', startDate: '2026-08-01', endDate: '2026-08-31', actuals: {
+      menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} },
+      laborRecords: [{ laborRoleId: 'missing', hours: 1, cost: 1 }],
+      wasteRecords: [{ resourceId: settings.resources[0].id, quantity: 1, unit: 'L', reason: 'spoilage' }],
+      inventoryRecords: [{ resourceId: 'missing', date: 'bad', quantity: -1, unit: '個' }],
+    } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['missing-actual-labor-role', 'actual-resource-unit-mismatch', 'missing-actual-resource', 'invalid-actual-inventory']))
+  })
+
+  it('Phase 9のMapping先EntityとImport先Actualを検証する', () => {
+    const settings = createSampleSettings()
+    settings.importMappingProfiles = [{ id: 'profile', name: 'CSV', sourceType: 'sales', mappings: { date: 'date' }, entityMappings: { menuItems: { 外部: 'missing' }, resources: {}, laborRoles: {}, wasteReasons: {} }, updatedAt: '2026-09-01' }]
+    settings.importRecords = [{ id: 'record', datasetId: 'data', datasetHash: 'hash', sourceType: 'sales', actualPeriodId: 'missing', importedAt: '2026-09-01', importedRows: 1, skippedRows: 0, errorRows: 0, targetFields: ['revenue'], mergeMode: 'add', rowHashes: ['row'], beforeActual: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } }, afterActual: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-import-entity-mapping', 'missing-import-actual-period']))
+  })
+
+  it('Phase 9の重複Import候補をWarningにする', () => {
+    const settings = createSampleSettings()
+    settings.actualPeriods = [{ id: 'actual', name: '実績', startDate: '2026-08-01', endDate: '2026-08-31', actuals: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } } }]
+    const record = { id: 'one', datasetId: 'data', datasetHash: 'hash', sourceType: 'sales' as const, actualPeriodId: 'actual', importedAt: '2026-09-01', importedRows: 1, skippedRows: 0, errorRows: 0, targetFields: ['revenue'], mergeMode: 'add' as const, rowHashes: ['row'], beforeActual: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } }, afterActual: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } } }
+    settings.importRecords = [record, { ...record, id: 'two' }]
+    expect(validateSettings(settings)).toContainEqual(expect.objectContaining({ severity: 'warning', code: 'duplicate-import-candidate' }))
+  })
+
+  it('Phase 9のCalibration設定とHistory targetを検証する', () => {
+    const settings = createSampleSettings()
+    settings.calibrationSettings.minimumPeriods = 0
+    settings.calibrationSettings.varianceWarningThreshold = -1
+    settings.calibrationHistory = [{ id: 'history', appliedAt: '2026-09-01', targetType: 'resourceUnitPrice', targetId: 'missing', field: 'purchasePrice', previousValue: 1, newValue: 2, evidence: { description: 'test', periodCount: 1 }, sourceActualPeriodIds: [] }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-calibration-settings', 'invalid-calibration-history']))
+  })
 })

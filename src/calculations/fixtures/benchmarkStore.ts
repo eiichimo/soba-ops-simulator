@@ -1,6 +1,7 @@
 import type { AppSettings } from '../../models/types'
 import { createDefaultStochasticDemand } from '../../data/demandDefaults'
 import { createDefaultPlanningSettings } from '../../data/planningDefaults'
+import { createDefaultCalibrationSettings } from '../../data/calibrationDefaults'
 
 export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSettings => {
   const business = {
@@ -10,7 +11,7 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
   }
   const demandProfile = { id: 'benchmark-demand', name: '検算需要', timeSlots: [{ id: 'benchmark-slot', startTime: '09:00', endTime: '17:00', meals: 100 }] }
   return ({
-  schemaVersion: 8,
+  schemaVersion: 9,
   business,
   resources: [{
     id: 'benchmark-noodle',
@@ -92,6 +93,10 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
   scenarios: [],
   optimizationStudies: [],
   planning: createDefaultPlanningSettings(business),
+  importMappingProfiles: [],
+  importRecords: [],
+  calibrationHistory: [],
+  calibrationSettings: createDefaultCalibrationSettings(),
   capacity: {
     demandMode: 'deterministic',
     equipment: [{ id: 'benchmark-station', name: '検算設備', category: 'other', capacity: 1, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: false }],

@@ -3,10 +3,11 @@ import { createDefaultCapacitySettings } from '../data/capacityDefaults'
 import { createDefaultStochasticDemand } from '../data/demandDefaults'
 import { todayLocalDate } from '../calculations/calendar'
 import { createDefaultPlanningSettings } from '../data/planningDefaults'
+import { createDefaultCalibrationSettings } from '../data/calibrationDefaults'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 8
+export const CURRENT_SCHEMA_VERSION = 9
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -23,6 +24,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && (candidate.schemaVersion < 6 || (!!candidate.capacity?.stochasticDemand && !!candidate.capacity?.demandMode))
     && (candidate.schemaVersion < 7 || Array.isArray(candidate.optimizationStudies))
     && (candidate.schemaVersion < 8 || !!candidate.planning)
+    && (candidate.schemaVersion < 9 || (Array.isArray(candidate.importMappingProfiles) && Array.isArray(candidate.importRecords) && Array.isArray(candidate.calibrationHistory) && !!candidate.calibrationSettings))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -122,6 +124,25 @@ export const migrateV7ToV8 = (settings: AppSettings): AppSettings => ({
   planning: settings.planning ?? createDefaultPlanningSettings(settings.business),
 })
 
+export const migrateV8ToV9 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 9,
+  actualPeriods: settings.actualPeriods.map((period) => ({
+    ...period,
+    actuals: {
+      ...period.actuals,
+      laborRecords: period.actuals.laborRecords ?? [],
+      wasteRecords: period.actuals.wasteRecords ?? [],
+      inventoryRecords: period.actuals.inventoryRecords ?? [],
+    },
+    sourceMetadata: period.sourceMetadata ?? [],
+  })),
+  importMappingProfiles: settings.importMappingProfiles ?? [],
+  importRecords: settings.importRecords ?? [],
+  calibrationHistory: settings.calibrationHistory ?? [],
+  calibrationSettings: settings.calibrationSettings ?? createDefaultCalibrationSettings(),
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
@@ -131,6 +152,7 @@ export const migrateSettings = (settings: AppSettings): AppSettings => {
   if (migrated.schemaVersion === 5) migrated = migrateV5ToV6(migrated)
   if (migrated.schemaVersion === 6) migrated = migrateV6ToV7(migrated)
   if (migrated.schemaVersion === 7) migrated = migrateV7ToV8(migrated)
+  if (migrated.schemaVersion === 8) migrated = migrateV8ToV9(migrated)
   return migrated
 }
 

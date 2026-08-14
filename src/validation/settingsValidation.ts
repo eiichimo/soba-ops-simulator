@@ -318,10 +318,62 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
       const salePath = `${path}.actuals.menuSales.${saleIndex}`
       if (!settings.menuItems.some((menu) => menu.id === sale.menuItemId)) issues.push(issue('error', 'missing-actual-menu', `実績メニュー「${sale.menuItemId}」が見つかりません。`, salePath))
       if (sale.quantity < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}のメニュー別販売食数は0以上にしてください。`, salePath))
+      if (sale.revenue !== undefined && sale.revenue < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}のメニュー別売上は0以上にしてください。`, salePath))
+    }
+    for (const [recordIndex, record] of (actualPeriod.actuals.laborRecords ?? []).entries()) {
+      const recordPath = `${path}.actuals.laborRecords.${recordIndex}`
+      if (!settings.labor.some((role) => role.id === record.laborRoleId)) issues.push(issue('error', 'missing-actual-labor-role', `実績LaborRole「${record.laborRoleId}」が見つかりません。`, recordPath))
+      if ((record.hours ?? 0) < 0 || (record.cost ?? 0) < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}のRole別人件費実績は0以上にしてください。`, recordPath))
+    }
+    for (const [recordIndex, record] of (actualPeriod.actuals.wasteRecords ?? []).entries()) {
+      const recordPath = `${path}.actuals.wasteRecords.${recordIndex}`
+      const resource = resources.get(record.resourceId)
+      if (!resource) issues.push(issue('error', 'missing-actual-resource', `廃棄実績Resource「${record.resourceId}」が見つかりません。`, recordPath))
+      else if (!areUnitsCompatible(record.unit, resource.purchaseUnit)) issues.push(issue('error', 'actual-resource-unit-mismatch', `${resource.name}の廃棄単位${record.unit}は${resource.purchaseUnit}と換算できません。`, recordPath))
+      if (record.quantity < 0 || (record.cost ?? 0) < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}の廃棄実績は0以上にしてください。`, recordPath))
+    }
+    for (const [recordIndex, record] of (actualPeriod.actuals.inventoryRecords ?? []).entries()) {
+      const recordPath = `${path}.actuals.inventoryRecords.${recordIndex}`
+      const resource = resources.get(record.resourceId)
+      if (!resource) issues.push(issue('error', 'missing-actual-resource', `棚卸実績Resource「${record.resourceId}」が見つかりません。`, recordPath))
+      else if (!areUnitsCompatible(record.unit, resource.purchaseUnit)) issues.push(issue('error', 'actual-resource-unit-mismatch', `${resource.name}の棚卸単位${record.unit}は${resource.purchaseUnit}と換算できません。`, recordPath))
+      if (!parseLocalDate(record.date) || record.quantity < 0 || (record.inventoryValue ?? 0) < 0) issues.push(issue('error', 'invalid-actual-inventory', `${actualPeriod.name}の棚卸実績が正しくありません。`, recordPath))
     }
   }
   if (new Set(settings.actualPeriods.map((period) => period.id)).size !== settings.actualPeriods.length) {
     issues.push(issue('error', 'duplicate-actual-id', '実績期間のIDが重複しています。', 'actualPeriods'))
+  }
+
+  const importSourceTypes = new Set(['sales', 'purchases', 'utilities', 'labor', 'waste', 'inventory', 'generic'])
+  for (const [index, profile] of settings.importMappingProfiles.entries()) {
+    const path = `importMappingProfiles.${index}`
+    if (!profile.name.trim() || !importSourceTypes.has(profile.sourceType)) issues.push(issue('error', 'invalid-import-mapping-profile', 'Import Mapping Profileの名前またはsourceTypeが正しくありません。', path))
+    for (const menuId of Object.values(profile.entityMappings.menuItems)) if (!settings.menuItems.some((menu) => menu.id === menuId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先Menu「${menuId}」が見つかりません。`, path))
+    for (const resourceId of Object.values(profile.entityMappings.resources)) if (!resources.has(resourceId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先Resource「${resourceId}」が見つかりません。`, path))
+    for (const roleId of Object.values(profile.entityMappings.laborRoles)) if (!settings.labor.some((role) => role.id === roleId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先LaborRole「${roleId}」が見つかりません。`, path))
+    for (const reason of Object.values(profile.entityMappings.wasteReasons)) if (!['trimLoss', 'cookingLoss', 'spoilage', 'unsold', 'mistake'].includes(reason)) issues.push(issue('error', 'invalid-import-entity-mapping', `廃棄理由Mapping「${reason}」が正しくありません。`, path))
+  }
+  if (new Set(settings.importMappingProfiles.map((profile) => profile.id)).size !== settings.importMappingProfiles.length) issues.push(issue('error', 'duplicate-import-profile-id', 'Import Mapping Profile IDが重複しています。', 'importMappingProfiles'))
+
+  for (const [index, record] of settings.importRecords.entries()) {
+    const path = `importRecords.${index}`
+    if (!settings.actualPeriods.some((period) => period.id === record.actualPeriodId)) issues.push(issue('error', 'missing-import-actual-period', `Import先ActualPeriod「${record.actualPeriodId}」が見つかりません。`, path))
+    if (!importSourceTypes.has(record.sourceType) || record.importedRows < 0 || record.skippedRows < 0 || record.errorRows < 0) issues.push(issue('error', 'invalid-import-record', 'Import RecordのsourceTypeまたは行数が正しくありません。', path))
+  }
+  if (new Set(settings.importRecords.map((record) => record.id)).size !== settings.importRecords.length) issues.push(issue('error', 'duplicate-import-record-id', 'Import Record IDが重複しています。', 'importRecords'))
+  const activeImportKeys = settings.importRecords.filter((record) => !record.undoneAt).map((record) => `${record.actualPeriodId}:${record.datasetHash}`)
+  if (new Set(activeImportKeys).size !== activeImportKeys.length) issues.push(issue('warning', 'duplicate-import-candidate', '同じActualPeriodへ同一datasetを複数回Importした候補があります。', 'importRecords'))
+
+  if (!Number.isInteger(settings.calibrationSettings.minimumPeriods) || settings.calibrationSettings.minimumPeriods <= 0 || settings.calibrationSettings.varianceWarningThreshold < 0) {
+    issues.push(issue('error', 'invalid-calibration-settings', 'Calibrationの最低期間数とVariance閾値が正しくありません。', 'calibrationSettings'))
+  }
+  for (const [index, entry] of settings.calibrationHistory.entries()) {
+    const path = `calibrationHistory.${index}`
+    const targetExists = entry.targetType === 'utilityUnitPrice' ? ['water', 'gas', 'electricity'].includes(entry.targetId ?? '')
+      : entry.targetType === 'resourceUnitPrice' ? resources.has(entry.targetId ?? '')
+        : entry.targetType === 'laborHourlyWage' ? settings.labor.some((role) => role.id === entry.targetId)
+          : entry.targetType === 'demandMeals'
+    if (!targetExists || entry.previousValue < 0 || entry.newValue < 0) issues.push(issue('error', 'invalid-calibration-history', 'Calibration Historyの対象または値が正しくありません。', path))
   }
 
   for (const [index, scenario] of settings.scenarios.entries()) {
@@ -345,6 +397,10 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     }
     for (const resourceId of Object.keys(scenario.overrides.resourcePurchasePriceMultipliers ?? {})) {
       if (!resources.has(resourceId)) issues.push(issue('error', 'missing-scenario-resource', `${scenario.name}の対象Resource「${resourceId}」が見つかりません。`, path))
+    }
+    for (const [roleId, wage] of Object.entries(scenario.overrides.laborHourlyWageOverrides ?? {})) {
+      if (!settings.labor.some((role) => role.id === roleId)) issues.push(issue('error', 'missing-scenario-labor-role', `${scenario.name}のLaborRole「${roleId}」が見つかりません。`, path))
+      if (wage < 0) issues.push(issue('error', 'negative-scenario-labor-wage', `${scenario.name}の時給は0円以上にしてください。`, path))
     }
     for (const [shiftId, headcount] of Object.entries(scenario.overrides.staffShiftHeadcountOverrides ?? {})) {
       if (!settings.capacity.staffShifts.some((shift) => shift.id === shiftId)) issues.push(issue('error', 'missing-scenario-shift', `${scenario.name}のStaffShift「${shiftId}」が見つかりません。`, path))

@@ -293,7 +293,7 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
     })),
     labor: settings.labor.map((role) => ({
       ...role,
-      hourlyWage: role.hourlyWage * (overrides.laborWageMultiplier ?? 1),
+      hourlyWage: overrides.laborHourlyWageOverrides?.[role.id] ?? role.hourlyWage * (overrides.laborWageMultiplier ?? 1),
     })),
     resources: settings.resources.map((resource) => ({
       ...resource,

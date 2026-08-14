@@ -3,6 +3,7 @@ import { todayLocalDate } from '../calculations/calendar'
 import { createSampleCapacitySettings } from './capacityDefaults'
 import { createSampleOptimizationStudy } from './optimizationDefaults'
 import { createDefaultPlanningSettings } from './planningDefaults'
+import { createDefaultCalibrationSettings } from './calibrationDefaults'
 
 const resource = (
   id: string,
@@ -56,7 +57,7 @@ export const createSampleSettings = (): AppSettings => {
     })),
   }
   return ({
-  schemaVersion: 8,
+  schemaVersion: 9,
   business,
   resources: [
     resource('raw-soba', '生そば', 'noodle', 1_000, 'g', 750, 0.98, { shelfLifeDays: 3 }),
@@ -279,6 +280,10 @@ export const createSampleSettings = (): AppSettings => {
   capacity: createSampleCapacitySettings(),
   optimizationStudies: [createSampleOptimizationStudy()],
   planning: createDefaultPlanningSettings(business),
+  importMappingProfiles: [],
+  importRecords: [],
+  calibrationHistory: [],
+  calibrationSettings: createDefaultCalibrationSettings(),
   })
 }
 
