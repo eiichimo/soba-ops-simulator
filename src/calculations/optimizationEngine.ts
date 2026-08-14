@@ -19,6 +19,7 @@ import { calculateCapacityStaffCost, createDeterministicOrders, getCapacityBusin
 import { runMonteCarlo, runMonteCarloAsync } from './monteCarloEngine'
 import { simulateCustomerJourney } from './seatingEngine'
 import { timeToMinutes } from './calendar'
+import { deriveMultiDaySeed, runMultiDayMonteCarlo, runMultiDayMonteCarloAsync, simulateMultiDay } from './multiDayEngine'
 
 const EPSILON = 1e-9
 
@@ -83,6 +84,21 @@ export const optimizationValuesToOverrides = (
   }
   if (variable.type === 'openingTime' && typeof value === 'string') return { ...overrides, kitchenOpeningTime: value }
   if (variable.type === 'closingTime' && typeof value === 'string') return { ...overrides, kitchenClosingTime: value }
+  if (variable.type === 'weekdayStaffHeadcount' && variable.targetId && variable.day !== undefined && typeof value === 'number') {
+    return { ...overrides, weekdayStaffHeadcountOverrides: mergeOverrideMap(overrides.weekdayStaffHeadcountOverrides, `${variable.day}:${variable.targetId}`, value) }
+  }
+  if (variable.type === 'weekdayOpeningTime' && variable.day !== undefined && typeof value === 'string') {
+    return { ...overrides, weekdayOpeningTimeOverrides: { ...overrides.weekdayOpeningTimeOverrides, [String(variable.day)]: value } }
+  }
+  if (variable.type === 'weekdayClosingTime' && variable.day !== undefined && typeof value === 'string') {
+    return { ...overrides, weekdayClosingTimeOverrides: { ...overrides.weekdayClosingTimeOverrides, [String(variable.day)]: value } }
+  }
+  if (variable.type === 'processPrepLookaheadDays' && variable.targetId && typeof value === 'number') {
+    return { ...overrides, processPrepLookaheadDaysOverrides: mergeOverrideMap(overrides.processPrepLookaheadDaysOverrides, variable.targetId, value) }
+  }
+  if (variable.type === 'resourceProcurementLookaheadDays' && variable.targetId && typeof value === 'number') {
+    return { ...overrides, resourceProcurementLookaheadDaysOverrides: mergeOverrideMap(overrides.resourceProcurementLookaheadDaysOverrides, variable.targetId, value) }
+  }
   return overrides
 }, {})
 
@@ -132,6 +148,10 @@ const deterministicMetrics = (settings: AppSettings, seed: number): Optimization
     totalSeats: totalSeats(settings),
     serviceLevel: journey.capacity.withinTargetRate,
     afterClosingMinutes: Math.max(0, journey.capacity.finalCompletionMinute - journey.capacity.closingMinute),
+    periodWasteCost: 0,
+    stockoutLostRevenue: 0,
+    purchaseExpenditure: 0,
+    endingInventoryValue: 0,
   }
 }
 
@@ -150,6 +170,10 @@ const monteCarloMetrics = (settings: AppSettings, study: OptimizationStudy): Opt
     totalSeats: totalSeats(settings),
     serviceLevel: average(result.summaries.map((summary) => summary.withinTargetRate)),
     afterClosingMinutes: Math.max(0, result.statistics.finalCompletionMinute.mean - closing),
+    periodWasteCost: 0,
+    stockoutLostRevenue: 0,
+    purchaseExpenditure: 0,
+    endingInventoryValue: 0,
   }
 }
 
@@ -168,6 +192,77 @@ const monteCarloMetricsAsync = async (settings: AppSettings, study: Optimization
     totalSeats: totalSeats(settings),
     serviceLevel: average(result.summaries.map((summary) => summary.withinTargetRate)),
     afterClosingMinutes: Math.max(0, result.statistics.finalCompletionMinute.mean - closing),
+    periodWasteCost: 0,
+    stockoutLostRevenue: 0,
+    purchaseExpenditure: 0,
+    endingInventoryValue: 0,
+  }
+}
+
+const multiDayMetrics = (settings: AppSettings, study: OptimizationStudy): OptimizationCandidateMetrics => {
+  const horizon = Math.max(1, study.planningHorizonDays ?? 1)
+  if (study.evaluationMode === 'monteCarlo') {
+    const result = runMultiDayMonteCarlo(settings, study.monteCarloRuns, study.baseSeed, horizon)
+    const deterministic = simulateMultiDay(settings, { horizonDays: horizon })
+    return {
+      meanOperatingProfit: result.statistics.operatingProfit.mean,
+      p10OperatingProfit: result.statistics.operatingProfit.p10,
+      realizedSales: result.statistics.realizedMeals.mean,
+      abandonmentRate: result.statistics.abandonmentRate.mean,
+      averageKitchenWait: result.statistics.averageWaitMinutes.mean,
+      p90KitchenWait: result.statistics.averageWaitMinutes.p90,
+      laborCost: deterministic.laborCost,
+      staffCount: totalStaff(settings),
+      totalSeats: totalSeats(settings),
+      serviceLevel: 1 - result.statistics.abandonmentRate.mean,
+      afterClosingMinutes: 0,
+      periodWasteCost: result.statistics.wasteCost.mean,
+      stockoutLostRevenue: result.statistics.stockoutLostRevenue.mean,
+      purchaseExpenditure: deterministic.purchaseExpenditure,
+      endingInventoryValue: result.statistics.endingInventoryValue.mean,
+    }
+  }
+  const result = simulateMultiDay(settings, { horizonDays: horizon, stochastic: false, baseSeed: study.baseSeed })
+  return {
+    meanOperatingProfit: result.operatingProfit,
+    p10OperatingProfit: result.operatingProfit,
+    realizedSales: result.realizedMeals,
+    abandonmentRate: result.demandMeals > 0 ? Math.max(0, result.demandMeals - result.capacityCompletedMeals) / result.demandMeals : 0,
+    averageKitchenWait: result.averageWaitMinutes,
+    p90KitchenWait: Math.max(0, ...result.dailyResults.map((day) => day.averageWaitMinutes)),
+    laborCost: result.laborCost,
+    staffCount: totalStaff(settings),
+    totalSeats: totalSeats(settings),
+    serviceLevel: result.serviceLevel,
+    afterClosingMinutes: 0,
+    periodWasteCost: result.wasteCost,
+    stockoutLostRevenue: result.stockoutLostRevenue,
+    purchaseExpenditure: result.purchaseExpenditure,
+    endingInventoryValue: result.endingInventoryValue,
+  }
+}
+
+const multiDayMetricsAsync = async (settings: AppSettings, study: OptimizationStudy): Promise<OptimizationCandidateMetrics> => {
+  const horizon = Math.max(1, study.planningHorizonDays ?? 1)
+  if (study.evaluationMode !== 'monteCarlo') return multiDayMetrics(settings, study)
+  const result = await runMultiDayMonteCarloAsync(settings, study.monteCarloRuns, study.baseSeed, horizon)
+  const deterministic = simulateMultiDay(settings, { horizonDays: horizon })
+  return {
+    meanOperatingProfit: result.statistics.operatingProfit.mean,
+    p10OperatingProfit: result.statistics.operatingProfit.p10,
+    realizedSales: result.statistics.realizedMeals.mean,
+    abandonmentRate: result.statistics.abandonmentRate.mean,
+    averageKitchenWait: result.statistics.averageWaitMinutes.mean,
+    p90KitchenWait: result.statistics.averageWaitMinutes.p90,
+    laborCost: deterministic.laborCost,
+    staffCount: totalStaff(settings),
+    totalSeats: totalSeats(settings),
+    serviceLevel: 1 - result.statistics.abandonmentRate.mean,
+    afterClosingMinutes: 0,
+    periodWasteCost: result.statistics.wasteCost.mean,
+    stockoutLostRevenue: result.statistics.stockoutLostRevenue.mean,
+    purchaseExpenditure: deterministic.purchaseExpenditure,
+    endingInventoryValue: result.statistics.endingInventoryValue.mean,
   }
 }
 
@@ -182,6 +277,10 @@ export const metricValue = (metrics: OptimizationCandidateMetrics, metric: Optim
   if (metric === 'serviceLevel') return metrics.serviceLevel
   if (metric === 'staffCount') return metrics.staffCount
   if (metric === 'totalSeats') return metrics.totalSeats
+  if (metric === 'periodWasteCost') return metrics.periodWasteCost ?? 0
+  if (metric === 'stockoutLostRevenue') return metrics.stockoutLostRevenue ?? 0
+  if (metric === 'purchaseExpenditure') return metrics.purchaseExpenditure ?? 0
+  if (metric === 'endingInventoryValue') return metrics.endingInventoryValue ?? 0
   return metrics.afterClosingMinutes
 }
 
@@ -205,10 +304,14 @@ const objectiveValue = (metrics: OptimizationCandidateMetrics, objective: Optimi
   if (objective === 'maximizeP10OperatingProfit') return metrics.p10OperatingProfit
   if (objective === 'minimizeAverageWait') return metrics.averageKitchenWait
   if (objective === 'minimizeLaborCost') return metrics.laborCost
+  if (objective === 'maximizeMeanPeriodProfit') return metrics.meanOperatingProfit
+  if (objective === 'maximizeP10PeriodProfit') return metrics.p10OperatingProfit
+  if (objective === 'minimizePeriodWaste') return metrics.periodWasteCost ?? 0
+  if (objective === 'minimizeStockoutLoss') return metrics.stockoutLostRevenue ?? 0
   return metrics.realizedSales
 }
 
-const objectiveIsMinimized = (objective: OptimizationObjective) => objective === 'minimizeAverageWait' || objective === 'minimizeLaborCost'
+const objectiveIsMinimized = (objective: OptimizationObjective) => objective === 'minimizeAverageWait' || objective === 'minimizeLaborCost' || objective === 'minimizePeriodWaste' || objective === 'minimizeStockoutLoss'
 
 const compareByObjective = (objective: OptimizationObjective) => (a: OptimizationCandidateResult, b: OptimizationCandidateResult) => {
   if (a.feasible !== b.feasible) return a.feasible ? -1 : 1
@@ -220,15 +323,20 @@ const compareByObjective = (objective: OptimizationObjective) => (a: Optimizatio
 
 export const rankOptimizationCandidates = (candidates: OptimizationCandidateResult[], objective: OptimizationObjective) => [...candidates].sort(compareByObjective(objective))
 
-export const dominatesOptimizationCandidate = (candidate: OptimizationCandidateResult, other: OptimizationCandidateResult) => (
-  candidate.metrics.meanOperatingProfit >= other.metrics.meanOperatingProfit - EPSILON
-  && candidate.metrics.p90KitchenWait <= other.metrics.p90KitchenWait + EPSILON
-  && (candidate.metrics.meanOperatingProfit > other.metrics.meanOperatingProfit + EPSILON
-    || candidate.metrics.p90KitchenWait < other.metrics.p90KitchenWait - EPSILON)
-)
+export const dominatesOptimizationCandidate = (candidate: OptimizationCandidateResult, other: OptimizationCandidateResult, metric: OptimizationStudy['paretoMetric'] = 'profitWait') => {
+  const candidateCost = metric === 'profitWaste' ? candidate.metrics.periodWasteCost ?? 0
+    : metric === 'profitStockout' ? candidate.metrics.stockoutLostRevenue ?? 0
+      : candidate.metrics.p90KitchenWait
+  const otherCost = metric === 'profitWaste' ? other.metrics.periodWasteCost ?? 0
+    : metric === 'profitStockout' ? other.metrics.stockoutLostRevenue ?? 0
+      : other.metrics.p90KitchenWait
+  return candidate.metrics.meanOperatingProfit >= other.metrics.meanOperatingProfit - EPSILON
+    && candidateCost <= otherCost + EPSILON
+    && (candidate.metrics.meanOperatingProfit > other.metrics.meanOperatingProfit + EPSILON || candidateCost < otherCost - EPSILON)
+}
 
-export const findOptimizationParetoFrontier = (candidates: OptimizationCandidateResult[]) => candidates.filter((candidate) => (
-  !candidates.some((other) => other.id !== candidate.id && dominatesOptimizationCandidate(other, candidate))
+export const findOptimizationParetoFrontier = (candidates: OptimizationCandidateResult[], metric: OptimizationStudy['paretoMetric'] = 'profitWait') => candidates.filter((candidate) => (
+  !candidates.some((other) => other.id !== candidate.id && dominatesOptimizationCandidate(other, candidate, metric))
 ))
 
 const boundaryVariables = (study: OptimizationStudy, values: Record<string, number | string>): OptimizationBoundaryVariable[] => study.variables.flatMap((variable) => {
@@ -282,7 +390,9 @@ const evaluateCandidate = (
   candidateIndex: number,
 ): OptimizationCandidateResult => {
   const candidateSettings = applyOptimizationCandidate(settings, study, values)
-  const metrics = study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(candidateSettings, study) : deterministicMetrics(candidateSettings, study.baseSeed)
+  const metrics = (study.planningHorizonDays ?? 1) > 1
+    ? multiDayMetrics(candidateSettings, study)
+    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(candidateSettings, study) : deterministicMetrics(candidateSettings, study.baseSeed)
   const violations = evaluateOptimizationConstraints(metrics, study.constraints)
   const coverageWarning = demandCoverageWarning(settings, candidateSettings)
   return {
@@ -310,9 +420,11 @@ const evaluateCandidateAsync = async (
   candidateIndex: number,
 ): Promise<OptimizationCandidateResult> => {
   const candidateSettings = applyOptimizationCandidate(settings, study, values)
-  const metrics = study.evaluationMode === 'monteCarlo'
-    ? await monteCarloMetricsAsync(candidateSettings, study)
-    : deterministicMetrics(candidateSettings, study.baseSeed)
+  const metrics = (study.planningHorizonDays ?? 1) > 1
+    ? await multiDayMetricsAsync(candidateSettings, study)
+    : study.evaluationMode === 'monteCarlo'
+      ? await monteCarloMetricsAsync(candidateSettings, study)
+      : deterministicMetrics(candidateSettings, study.baseSeed)
   const violations = evaluateOptimizationConstraints(metrics, study.constraints)
   const coverageWarning = demandCoverageWarning(settings, candidateSettings)
   return {
@@ -340,7 +452,7 @@ const finalizeOptimization = (
 ): OptimizationRunResult => {
   const feasible = evaluatedCandidates.filter((candidate) => candidate.feasible)
   const paretoSource = feasible.length > 0 ? feasible : evaluatedCandidates
-  const paretoIds = new Set(findOptimizationParetoFrontier(paretoSource).map((candidate) => candidate.id))
+  const paretoIds = new Set(findOptimizationParetoFrontier(paretoSource, study.paretoMetric).map((candidate) => candidate.id))
   const candidates = evaluatedCandidates.map((candidate) => {
     const profitDifference = candidate.metrics.meanOperatingProfit - baseMetrics.meanOperatingProfit
     return {
@@ -366,7 +478,11 @@ const finalizeOptimization = (
     rankedCandidates,
     paretoCandidates: candidates.filter((candidate) => candidate.pareto),
     evaluationSeeds: study.evaluationMode === 'monteCarlo'
-      ? Array.from({ length: study.monteCarloRuns }, (_, index) => (Math.trunc(study.baseSeed) + index) >>> 0)
+      ? Array.from({ length: study.monteCarloRuns }, (_, index) => (
+        (study.planningHorizonDays ?? 1) > 1
+          ? deriveMultiDaySeed(study.baseSeed, index, 0)
+          : (Math.trunc(study.baseSeed) + index) >>> 0
+      ))
       : [study.baseSeed],
     warnings,
   }
@@ -377,7 +493,7 @@ const assertStudyCanRun = (study: OptimizationStudy) => {
   if (count === 0) throw new Error('探索Variableに候補値がありません。')
   if (count > study.hardCandidateLimit) throw new Error(`総候補数${count.toLocaleString('ja-JP')}件がhard limit ${study.hardCandidateLimit.toLocaleString('ja-JP')}件を超えています。`)
   if (count > study.maxCandidates) throw new Error(`総候補数${count.toLocaleString('ja-JP')}件がStudy上限 ${study.maxCandidates.toLocaleString('ja-JP')}件を超えています。Variable範囲を狭めてください。`)
-  if (study.objective === 'maximizeP10OperatingProfit' && study.evaluationMode !== 'monteCarlo') throw new Error('p10営業利益ObjectiveにはMonte Carlo評価が必要です。')
+  if ((study.objective === 'maximizeP10OperatingProfit' || study.objective === 'maximizeP10PeriodProfit') && study.evaluationMode !== 'monteCarlo') throw new Error('p10営業利益ObjectiveにはMonte Carlo評価が必要です。')
   if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns <= 0) throw new Error('Monte Carlo run数は1以上にしてください。')
 }
 
@@ -399,7 +515,9 @@ export const runOptimization = (settings: AppSettings, study: OptimizationStudy)
   assertStudyCanRun(study)
   const combinations = generateOptimizationCandidates(study.variables, study.hardCandidateLimit)
   assertCandidateBusinessHours(settings, study, combinations)
-  const baseMetrics = study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(settings, study) : deterministicMetrics(settings, study.baseSeed)
+  const baseMetrics = (study.planningHorizonDays ?? 1) > 1
+    ? multiDayMetrics(settings, study)
+    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(settings, study) : deterministicMetrics(settings, study.baseSeed)
   const candidates = combinations.map((values, index) => evaluateCandidate(settings, study, values, index))
   return finalizeOptimization(study, baseMetrics, candidates)
 }
@@ -413,7 +531,9 @@ export const runOptimizationAsync = async (
   assertStudyCanRun(study)
   const combinations = generateOptimizationCandidates(study.variables, study.hardCandidateLimit)
   assertCandidateBusinessHours(settings, study, combinations)
-  const baseMetrics = study.evaluationMode === 'monteCarlo' ? await monteCarloMetricsAsync(settings, study) : deterministicMetrics(settings, study.baseSeed)
+  const baseMetrics = (study.planningHorizonDays ?? 1) > 1
+    ? await multiDayMetricsAsync(settings, study)
+    : study.evaluationMode === 'monteCarlo' ? await monteCarloMetricsAsync(settings, study) : deterministicMetrics(settings, study.baseSeed)
   const candidates: OptimizationCandidateResult[] = []
   for (let index = 0; index < combinations.length; index += 1) {
     if (isCancelled?.()) throw new OptimizationCancelledError()
@@ -433,6 +553,11 @@ export const optimizationCandidateToScenario = (candidate: OptimizationCandidate
     equipmentCapacityOverrides: candidate.overrides.equipmentCapacityOverrides ? { ...candidate.overrides.equipmentCapacityOverrides } : undefined,
     seatingUnitCountOverrides: candidate.overrides.seatingUnitCountOverrides ? { ...candidate.overrides.seatingUnitCountOverrides } : undefined,
     kitchenOperationDurationOverrides: candidate.overrides.kitchenOperationDurationOverrides ? { ...candidate.overrides.kitchenOperationDurationOverrides } : undefined,
+    weekdayStaffHeadcountOverrides: candidate.overrides.weekdayStaffHeadcountOverrides ? { ...candidate.overrides.weekdayStaffHeadcountOverrides } : undefined,
+    weekdayOpeningTimeOverrides: candidate.overrides.weekdayOpeningTimeOverrides ? { ...candidate.overrides.weekdayOpeningTimeOverrides } : undefined,
+    weekdayClosingTimeOverrides: candidate.overrides.weekdayClosingTimeOverrides ? { ...candidate.overrides.weekdayClosingTimeOverrides } : undefined,
+    processPrepLookaheadDaysOverrides: candidate.overrides.processPrepLookaheadDaysOverrides ? { ...candidate.overrides.processPrepLookaheadDaysOverrides } : undefined,
+    resourceProcurementLookaheadDaysOverrides: candidate.overrides.resourceProcurementLookaheadDaysOverrides ? { ...candidate.overrides.resourceProcurementLookaheadDaysOverrides } : undefined,
   },
   notes: 'Optimization候補から保存。Base Settingsは変更していません。',
 })

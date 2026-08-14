@@ -7,6 +7,7 @@ import type {
   InventoryItemSummary,
   InventoryLot,
   InventorySimulationResult,
+  InventoryShortageRecord,
   InventoryWasteRecord,
   LaborCostMode,
   LaborBreakdown,
@@ -152,6 +153,18 @@ export interface InventoryEngineResult {
   processCashUtilities: { water: number; gas: number; electricity: number }
   processCashAdditionalLabor: number
   inventory: Omit<InventorySimulationResult, 'simpleCashFlow'>
+  shortages: InventoryShortageRecord[]
+}
+
+export interface InventoryPrepTarget {
+  outputId: string
+  targetQuantity: number
+  unit: Unit
+}
+
+export interface InventoryPeriodOptions {
+  canPurchaseResource?: (resource: Resource, date: string) => boolean
+  prepTargetsByDate?: Record<string, InventoryPrepTarget[]>
 }
 
 export const simulateInventoryPeriod = (
@@ -160,6 +173,7 @@ export const simulateInventoryPeriod = (
   mealsPerDay = settings.business.mealsPerDay,
   laborCostMode: LaborCostMode = 'accounting',
   calendarOverride?: CalendarSummary,
+  options?: InventoryPeriodOptions,
 ): InventoryEngineResult => {
   const calendar = calendarOverride ?? calculateCalendarSummary(settings, period)
   const startDate = parseLocalDate(calendar.startDate) ?? new Date()
@@ -168,6 +182,7 @@ export const simulateInventoryPeriod = (
   const lots: InventoryLot[] = []
   const purchases: PurchaseRecord[] = []
   const wastes: InventoryWasteRecord[] = []
+  const shortages: InventoryShortageRecord[] = []
   const summaries = new Map<string, MutableSummary>()
   const resourceUsage = new Map<string, ResourceCalculationDetail>()
   const processDetails = new Map<string, ProcessCalculationDetail>()
@@ -253,7 +268,8 @@ export const simulateInventoryPeriod = (
       expiryDate: opening.expiryDate || calculateExpiryDate(acquiredDate, meta.shelfLifeDays),
       unitCost,
       purchaseCost: quantity * unitCost,
-      source: 'openingInventory',
+      source: opening.source ?? 'openingInventory',
+      costComponents: opening.costComponents,
     }
     lots.push(lot)
     const summary = createSummary(opening.sourceType, opening.sourceId)
@@ -277,6 +293,7 @@ export const simulateInventoryPeriod = (
   }
 
   const purchaseResource = (resource: Resource, requiredQuantity: number, date: string) => {
+    if (options?.canPurchaseResource && !options.canPurchaseResource(resource, date)) return
     const currentQuantity = availableQuantity('resource', resource.id, resource.purchaseUnit)
     const order = calculatePurchaseOrder(resource, currentQuantity, requiredQuantity)
     if (order.packages <= 0) return
@@ -331,7 +348,7 @@ export const simulateInventoryPeriod = (
     quantity: number,
     unit: Unit,
     date: string,
-    purpose: 'sale' | 'production',
+    purpose: 'sale' | 'production' | 'prep',
   ) => {
     const result = consumeInventoryFIFO(lots, sourceType, sourceId, quantity, unit)
     lots.splice(0, lots.length, ...result.lots)
@@ -356,6 +373,18 @@ export const simulateInventoryPeriod = (
         else costs.directIngredients += result.consumedCost
       } else addRecognizedComponents(result.consumedComponents, result.consumedCost)
     }
+    const shortageQuantity = Math.max(0, quantity - result.consumedQuantity)
+    if (shortageQuantity > EPSILON) shortages.push({
+      date,
+      sourceType,
+      sourceId,
+      name: summary.name,
+      requiredQuantity: quantity,
+      suppliedQuantity: result.consumedQuantity,
+      shortageQuantity,
+      unit,
+      purpose,
+    })
     return result
   }
 
@@ -389,10 +418,19 @@ export const simulateInventoryPeriod = (
     let materialCost = 0
 
     for (const recipeInput of found.process.inputs) {
-      const inputMeta = sourceMeta(recipeInput.sourceType, recipeInput.sourceId)
-      if (!inputMeta) continue
       const required = recipeInput.quantity * batches
       ensureSource(recipeInput.sourceType, recipeInput.sourceId, required, recipeInput.unit, date, nextTrail)
+    }
+    const inputsAvailable = found.process.inputs.every((recipeInput) => {
+      const inputMeta = sourceMeta(recipeInput.sourceType, recipeInput.sourceId)
+      if (!inputMeta) return false
+      const required = tryConvertQuantity(recipeInput.quantity * batches, recipeInput.unit, inputMeta.unit)
+      return required !== null && availableQuantity(recipeInput.sourceType, recipeInput.sourceId, inputMeta.unit) + EPSILON >= required
+    })
+    if (!inputsAvailable) return
+
+    for (const recipeInput of found.process.inputs) {
+      const required = recipeInput.quantity * batches
       const inputConsumption = consume(recipeInput.sourceType, recipeInput.sourceId, required, recipeInput.unit, date, 'production')
       materialCost += inputConsumption.consumedCost
     }
@@ -543,6 +581,25 @@ export const simulateInventoryPeriod = (
     }
     lots.splice(0, lots.length, ...retainedLots)
 
+    for (const target of options?.prepTargetsByDate?.[dateString] ?? []) {
+      ensureSource('output', target.outputId, target.targetQuantity, target.unit, dateString, new Set())
+      const available = availableQuantity('output', target.outputId, target.unit)
+      if (available + EPSILON < target.targetQuantity) {
+        const summary = createSummary('output', target.outputId)
+        shortages.push({
+          date: dateString,
+          sourceType: 'output',
+          sourceId: target.outputId,
+          name: summary.name,
+          requiredQuantity: target.targetQuantity,
+          suppliedQuantity: available,
+          shortageQuantity: target.targetQuantity - available,
+          unit: target.unit,
+          purpose: 'prep',
+        })
+      }
+    }
+
     const schedule = getScheduleForDate(settings, date)
     if (schedule?.enabled && scheduleHours(schedule) > 0) {
       const demand = new Map<string, SourceRef>()
@@ -611,6 +668,7 @@ export const simulateInventoryPeriod = (
       wastes,
       endingLots: sortLots(lots),
     },
+    shortages,
   }
 }
 

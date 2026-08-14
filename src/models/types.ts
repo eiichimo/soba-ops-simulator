@@ -32,10 +32,12 @@ export type SeatingCategory = 'counter' | 'table'
 export type DurationDistribution = 'fixed' | 'uniform'
 export type PartyState = 'waiting' | 'seated' | 'ordered' | 'served' | 'departed' | 'abandoned'
 export type OptimizationEvaluationMode = 'deterministic' | 'monteCarlo'
-export type OptimizationVariableType = 'staffShiftHeadcount' | 'equipmentCapacity' | 'seatingUnitCount' | 'openingTime' | 'closingTime' | 'kitchenOperationDuration'
-export type OptimizationObjective = 'maximizeMeanOperatingProfit' | 'maximizeP10OperatingProfit' | 'minimizeAverageWait' | 'minimizeLaborCost' | 'maximizeRealizedSales'
-export type OptimizationConstraintMetric = 'laborCost' | 'meanOperatingProfit' | 'p10OperatingProfit' | 'averageKitchenWait' | 'p90KitchenWait' | 'abandonmentRate' | 'realizedSales' | 'serviceLevel' | 'staffCount' | 'totalSeats' | 'afterClosingMinutes'
+export type OptimizationVariableType = 'staffShiftHeadcount' | 'equipmentCapacity' | 'seatingUnitCount' | 'openingTime' | 'closingTime' | 'kitchenOperationDuration' | 'weekdayStaffHeadcount' | 'weekdayOpeningTime' | 'weekdayClosingTime' | 'processPrepLookaheadDays' | 'resourceProcurementLookaheadDays'
+export type OptimizationObjective = 'maximizeMeanOperatingProfit' | 'maximizeP10OperatingProfit' | 'minimizeAverageWait' | 'minimizeLaborCost' | 'maximizeRealizedSales' | 'maximizeMeanPeriodProfit' | 'maximizeP10PeriodProfit' | 'minimizePeriodWaste' | 'minimizeStockoutLoss'
+export type OptimizationConstraintMetric = 'laborCost' | 'meanOperatingProfit' | 'p10OperatingProfit' | 'averageKitchenWait' | 'p90KitchenWait' | 'abandonmentRate' | 'realizedSales' | 'serviceLevel' | 'staffCount' | 'totalSeats' | 'afterClosingMinutes' | 'periodWasteCost' | 'stockoutLostRevenue' | 'purchaseExpenditure' | 'endingInventoryValue'
 export type OptimizationConstraintOperator = '<=' | '>='
+export type OptimizationParetoMetric = 'profitWait' | 'profitWaste' | 'profitStockout'
+export type PurchaseOrderStatus = 'planned' | 'pending' | 'delivered' | 'cancelled'
 
 export interface Resource {
   id: string
@@ -53,6 +55,8 @@ export interface Resource {
   priceStandard?: number
   priceHigh?: number
   isReferencePrice?: boolean
+  procurementLeadTimeDays?: number
+  procurementLookaheadDays?: number
 }
 
 export interface SourceRef {
@@ -87,6 +91,7 @@ export interface Process {
   waterUsageL: number
   wasteRate: number
   wasteReason: WasteReason
+  prepLookaheadDays?: number
 }
 
 export interface MenuItem {
@@ -145,6 +150,8 @@ export interface OpeningInventoryLot {
   acquiredDate: string
   expiryDate?: string
   unitCost?: number
+  costComponents?: InventoryCostComponents
+  source?: InventoryLotSource
 }
 
 export interface InventoryCostComponents {
@@ -308,6 +315,11 @@ export interface ScenarioOverrides {
   seatingUnitCountOverrides?: Record<string, number>
   kitchenOpeningTime?: string
   kitchenClosingTime?: string
+  weekdayStaffHeadcountOverrides?: Record<string, number>
+  weekdayOpeningTimeOverrides?: Record<string, string>
+  weekdayClosingTimeOverrides?: Record<string, string>
+  processPrepLookaheadDaysOverrides?: Record<string, number>
+  resourceProcurementLookaheadDaysOverrides?: Record<string, number>
 }
 
 export interface Scenario {
@@ -447,6 +459,7 @@ export interface OptimizationVariable {
   name: string
   type: OptimizationVariableType
   targetId?: string
+  day?: number
   values: Array<number | string>
   min?: number
   max?: number
@@ -483,6 +496,10 @@ export interface OptimizationCandidateMetrics {
   totalSeats: number
   serviceLevel: number
   afterClosingMinutes: number
+  periodWasteCost?: number
+  stockoutLostRevenue?: number
+  purchaseExpenditure?: number
+  endingInventoryValue?: number
 }
 
 export interface OptimizationBoundaryVariable {
@@ -527,6 +544,8 @@ export interface OptimizationStudy {
   baseSeed: number
   maxCandidates: number
   hardCandidateLimit: number
+  planningHorizonDays?: number
+  paretoMetric?: OptimizationParetoMetric
   isReferenceStudy?: boolean
   result?: OptimizationStudySavedResult
 }
@@ -556,6 +575,52 @@ export interface CapacitySettings {
   stochasticDemand: StochasticDemandSettings
 }
 
+export interface OperatingPlanOverride {
+  enabled?: boolean
+  openingTime?: string
+  closingTime?: string
+  mealsPerDay?: number
+  staffHeadcountOverrides?: Record<string, number>
+  demandProfile?: DemandProfile
+  arrivalProfile?: ArrivalProfile
+  manualPrepBatches?: Record<string, number>
+}
+
+export interface WeekdayPlanningTemplate extends OperatingPlanOverride {
+  day: number
+}
+
+export interface DailyOperatingPlan extends OperatingPlanOverride {
+  id: string
+  date: string
+  name?: string
+  notes?: string
+}
+
+export interface PurchaseOrder {
+  id: string
+  resourceId: string
+  orderedDate: string
+  deliveryDate: string
+  packageCount: number
+  quantity: number
+  cost: number
+  status: PurchaseOrderStatus
+  automatic?: boolean
+}
+
+export interface PlanningSettings {
+  horizonDays: number
+  hardMaximumDays: number
+  maxPrepActiveLaborMinutesPerDay?: number
+  weekdayTemplates: WeekdayPlanningTemplate[]
+  dailyOperatingPlans: DailyOperatingPlan[]
+  purchaseOrders: PurchaseOrder[]
+  monteCarloRuns: number
+  baseSeed: number
+  targetProfit: number
+}
+
 export interface AppSettings {
   schemaVersion: number
   business: BusinessSettings
@@ -577,6 +642,7 @@ export interface AppSettings {
   scenarios: Scenario[]
   capacity: CapacitySettings
   optimizationStudies: OptimizationStudy[]
+  planning: PlanningSettings
 }
 
 export interface CostBreakdown {
@@ -720,6 +786,151 @@ export interface InventorySimulationResult {
   endingLots: InventoryLot[]
 }
 
+export interface InventoryShortageRecord {
+  date: string
+  sourceType: 'resource' | 'output'
+  sourceId: string
+  name: string
+  requiredQuantity: number
+  suppliedQuantity: number
+  shortageQuantity: number
+  unit: Unit
+  purpose: 'sale' | 'production' | 'prep'
+}
+
+export interface MultiDayStockout {
+  date: string
+  resourceIds: string[]
+  menuItemIds: string[]
+  lostMeals: number
+  lostRevenue: number
+  shortages: InventoryShortageRecord[]
+}
+
+export interface MultiDayDailyResult {
+  date: string
+  day: number
+  operating: boolean
+  openingTime: string
+  closingTime: string
+  demandMeals: number
+  capacityCompletedMeals: number
+  realizedMeals: number
+  lostMeals: number
+  lostRevenue: number
+  revenue: number
+  usageCost: number
+  laborCost: number
+  operatingProfit: number
+  purchaseExpenditure: number
+  wasteCost: number
+  endingInventoryValue: number
+  averageWaitMinutes: number
+  serviceLevel: number
+  inventory: InventorySimulationResult
+  simulation: SimulationResult
+  stockouts: MultiDayStockout[]
+  deliveredOrders: PurchaseOrder[]
+  placedOrders: PurchaseOrder[]
+}
+
+export interface MultiDayInventoryTimelineEntry {
+  date: string
+  sourceType: 'resource' | 'output'
+  sourceId: string
+  name: string
+  unit: Unit
+  openingQuantity: number
+  deliveredQuantity: number
+  producedQuantity: number
+  byProductQuantity: number
+  consumedQuantity: number
+  wastedQuantity: number
+  endingQuantity: number
+  pendingQuantity: number
+}
+
+export interface MultiDayPrepTimelineEntry {
+  date: string
+  processId: string
+  processName: string
+  batches: number
+  producedQuantity: number
+  consumedQuantity: number
+  endingQuantity: number
+  activeLaborMinutes: number
+}
+
+export interface MultiDaySimulationResult {
+  startDate: string
+  endDateExclusive: string
+  horizonDays: number
+  operatingDays: number
+  demandMeals: number
+  capacityCompletedMeals: number
+  realizedMeals: number
+  stockoutLostMeals: number
+  stockoutLostRevenue: number
+  revenue: number
+  usageCost: number
+  laborCost: number
+  operatingProfit: number
+  simpleCashFlow: number
+  purchaseExpenditure: number
+  wasteCost: number
+  openingInventoryValue: number
+  endingInventoryValue: number
+  averageWaitMinutes: number
+  serviceLevel: number
+  purchaseCount: number
+  stockoutDays: number
+  dailyResults: MultiDayDailyResult[]
+  endingLots: InventoryLot[]
+  pendingOrders: PurchaseOrder[]
+  purchaseOrders: PurchaseOrder[]
+  inventoryTimeline: MultiDayInventoryTimelineEntry[]
+  prepTimeline: MultiDayPrepTimelineEntry[]
+  warnings: string[]
+}
+
+export interface MultiDayMonteCarloRunSummary {
+  runIndex: number
+  seed: number
+  revenue: number
+  realizedMeals: number
+  operatingProfit: number
+  simpleCashFlow: number
+  wasteCost: number
+  stockoutDays: number
+  stockoutLostMeals: number
+  stockoutLostRevenue: number
+  abandonmentRate: number
+  averageWaitMinutes: number
+  endingInventoryValue: number
+}
+
+export interface MultiDayMonteCarloResult {
+  runs: number
+  baseSeed: number
+  horizonDays: number
+  summaries: MultiDayMonteCarloRunSummary[]
+  statistics: {
+    revenue: MetricStatistics
+    realizedMeals: MetricStatistics
+    operatingProfit: MetricStatistics
+    simpleCashFlow: MetricStatistics
+    wasteCost: MetricStatistics
+    stockoutDays: MetricStatistics
+    stockoutLostMeals: MetricStatistics
+    stockoutLostRevenue: MetricStatistics
+    abandonmentRate: MetricStatistics
+    averageWaitMinutes: MetricStatistics
+    endingInventoryValue: MetricStatistics
+  }
+  lossPeriodRate: number
+  targetProfitProbability: number
+}
+
 export interface CalendarSummary {
   startDate: string
   endDateExclusive: string
@@ -762,6 +973,7 @@ export interface SimulationResult {
   labor: LaborBreakdown
   details: CalculationDetails
   inventory: InventorySimulationResult
+  inventoryShortages?: InventoryShortageRecord[]
 }
 
 export interface MakeBuyResult {

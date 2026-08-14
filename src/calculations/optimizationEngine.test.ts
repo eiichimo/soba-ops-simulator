@@ -286,3 +286,42 @@ describe('Optimization Scenario conversion', () => {
     expect(settings.capacity.staffShifts[0].headcount).toBe(original)
   })
 })
+
+describe('Phase 8 multi-day optimization', () => {
+  it('曜日別Staff候補をPlanning Overrideへ変換する', () => {
+    const target = variable({ id: 'monday-staff', type: 'weekdayStaffHeadcount', day: 0, values: [2] })
+    const overrides = optimizationValuesToOverrides([target], { 'monday-staff': 2 })
+    expect(overrides.weekdayStaffHeadcountOverrides).toEqual({ '0:benchmark-shift': 2 })
+  })
+
+  it('Process / Resource Lookahead候補をBaseを壊さず適用する', () => {
+    const settings = operationalStore()
+    settings.processes = [{
+      id: 'prep', name: '仕込み', inputs: [], outputs: [{ id: 'out', name: '出力', quantity: 1, unit: '個', costAllocation: 1, storageType: 'refrigerated', shelfLifeDays: 2 }],
+      batchSize: 1, processDurationMinutes: 1, activeLaborMinutes: 0, laborRole: 'benchmark-staff', laborCostTreatment: 'withinScheduledShift', gasUsageM3: 0, electricUsageKWh: 0, waterUsageL: 0, wasteRate: 0, wasteReason: 'cookingLoss', prepLookaheadDays: 0,
+    }]
+    const variables = [
+      variable({ id: 'prep-days', type: 'processPrepLookaheadDays', targetId: 'prep', values: [1] }),
+      variable({ id: 'buy-days', type: 'resourceProcurementLookaheadDays', targetId: 'benchmark-noodle', values: [3] }),
+    ]
+    const applied = applyOptimizationCandidate(settings, study({ variables, planningHorizonDays: 7 }), { 'prep-days': 1, 'buy-days': 3 })
+    expect(applied.processes[0].prepLookaheadDays).toBe(1)
+    expect(applied.resources[0].procurementLookaheadDays).toBe(3)
+    expect(settings.processes[0].prepLookaheadDays).toBe(0)
+  })
+
+  it('複数日候補を期間全体の利益指標で評価する', () => {
+    const settings = operationalStore()
+    const result = runOptimization(settings, study({ planningHorizonDays: 2, objective: 'maximizeMeanPeriodProfit' }))
+    expect(result.rankedCandidates).toHaveLength(2)
+    expect(result.rankedCandidates[0].metrics.meanOperatingProfit).toBe(result.rankedCandidates[0].objectiveValue)
+    expect(result.rankedCandidates[0].metrics.purchaseExpenditure).toBeGreaterThanOrEqual(0)
+  })
+
+  it('利益vs廃棄Paretoで全面的に劣る候補を除外する', () => {
+    const a = candidate('period-1', metrics({ meanOperatingProfit: 10_000, periodWasteCost: 500 }))
+    const b = candidate('period-2', metrics({ meanOperatingProfit: 12_000, periodWasteCost: 400 }))
+    const c = candidate('period-3', metrics({ meanOperatingProfit: 11_000, periodWasteCost: 200 }))
+    expect(findOptimizationParetoFrontier([a, b, c], 'profitWaste').map((item) => item.id)).toEqual(['period-2', 'period-3'])
+  })
+})

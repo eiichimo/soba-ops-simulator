@@ -17,6 +17,7 @@ import type {
 } from '../models/types'
 import { calculateCalendarRange, calculateCalendarSummary, parseLocalDate } from './calendar'
 import { simulateInventoryPeriod, simulateInventorySourcePlan } from './inventoryEngine'
+import type { InventoryPeriodOptions } from './inventoryEngine'
 import { tryConvertQuantity } from './units'
 
 const emptyCosts = (): CostBreakdown => ({
@@ -407,7 +408,37 @@ const calculateOperatingCore = (settings: AppSettings, meals: number, laborMode:
     }
   }
 
-  return { costs, revenue: menuRevenue + toppingRevenue, menuRevenue, toppingRevenue, ratioTotal, menus, trace }
+  return { costs, revenue: menuRevenue + toppingRevenue, menuRevenue, toppingRevenue, ratioTotal, menus, trace, demand: [...demand.values()] }
+}
+
+/** Phase 8 planning forecast. It exposes quantities from the normal economic trace;
+ * no independent recipe-cost formula is maintained by the planning engine. */
+export const calculatePlanningRequirements = (settings: AppSettings, meals: number) => {
+  const core = calculateOperatingCore(settings, Math.max(0, meals), 'accounting')
+  const outputDemand = new Map<string, { outputId: string; quantity: number; unit: Unit }>()
+  const addOutput = (outputId: string, quantity: number, unit: Unit, trail: Set<string>) => {
+    const found = findProcessOutput(settings, outputId)
+    if (!found || trail.has(outputId)) return
+    const converted = tryConvertQuantity(quantity, unit, found.output.unit)
+    if (converted === null) return
+    const current = outputDemand.get(outputId)
+    outputDemand.set(outputId, { outputId, quantity: (current?.quantity ?? 0) + converted, unit: found.output.unit })
+    const outputPerBatch = found.process.outputs[0]?.id === outputId ? found.process.batchSize : found.output.quantity
+    if (outputPerBatch <= 0) return
+    const batches = converted / outputPerBatch
+    const nextTrail = new Set(trail).add(outputId)
+    for (const input of found.process.inputs.filter((source) => source.sourceType === 'output')) {
+      addOutput(input.sourceId, input.quantity * batches, input.unit, nextTrail)
+    }
+  }
+  core.demand.filter((source) => source.sourceType === 'output').forEach((source) => addOutput(source.sourceId, source.quantity, source.unit, new Set()))
+  return {
+    resources: [...core.trace.resources.values()],
+    processes: [...core.trace.processes.values()],
+    outputs: [...outputDemand.values()],
+    menuRevenue: core.menuRevenue,
+    totalRevenue: core.revenue,
+  }
 }
 
 export const periodOperatingDays = (settings: AppSettings, period: PeriodKey) =>
@@ -424,14 +455,15 @@ const calculateShiftLabor = (settings: AppSettings, operatingHours: number) => {
   ), 0)
 }
 
-const simulateWithCalendar = (
+export const simulateWithCalendar = (
   settings: AppSettings,
   calendar: CalendarSummary,
   period: SimulationResult['period'],
   mealsPerDay: number,
+  inventoryOptions?: InventoryPeriodOptions,
 ): SimulationResult => {
   const core = calculateOperatingCore(settings, mealsPerDay, 'accounting')
-  const inventoryEngine = simulateInventoryPeriod(settings, period === 'custom' ? 'month' : period, mealsPerDay, 'accounting', calendar)
+  const inventoryEngine = simulateInventoryPeriod(settings, period === 'custom' ? 'month' : period, mealsPerDay, 'accounting', calendar, inventoryOptions)
   const costs = { ...inventoryEngine.costs }
   const meals = mealsPerDay * calendar.operatingDays
   const revenue = core.revenue * calendar.operatingDays
@@ -557,6 +589,7 @@ const simulateWithCalendar = (
     labor,
     details,
     inventory,
+    inventoryShortages: inventoryEngine.shortages,
   }
 }
 
@@ -569,12 +602,13 @@ export const simulateDateRange = (
   startDate: string,
   endDateInclusive: string,
   mealsPerDay = settings.business.mealsPerDay,
+  inventoryOptions?: InventoryPeriodOptions,
 ): SimulationResult | null => {
   const start = parseLocalDate(startDate)
   const end = parseLocalDate(endDateInclusive)
   if (!start || !end || end < start) return null
   const endExclusive = new Date(end.getFullYear(), end.getMonth(), end.getDate() + 1)
-  return simulateWithCalendar(settings, calculateCalendarRange(settings, start, endExclusive), 'custom', mealsPerDay)
+  return simulateWithCalendar(settings, calculateCalendarRange(settings, start, endExclusive), 'custom', mealsPerDay, inventoryOptions)
 }
 
 const outputQuantityInUnit = (settings: AppSettings, outputId: string, quantity: number, unit: Unit) => {

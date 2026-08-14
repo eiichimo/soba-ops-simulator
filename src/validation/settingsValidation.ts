@@ -3,9 +3,9 @@ import { calculateOptimizationCandidateCount, expandOptimizationVariableValues, 
 import { areUnitsCompatible } from '../calculations/units'
 import type { AppSettings, SourceRef, ValidationIssue } from '../models/types'
 
-const optimizationVariableTypes = new Set(['staffShiftHeadcount', 'equipmentCapacity', 'seatingUnitCount', 'openingTime', 'closingTime', 'kitchenOperationDuration'])
-const optimizationObjectives = new Set(['maximizeMeanOperatingProfit', 'maximizeP10OperatingProfit', 'minimizeAverageWait', 'minimizeLaborCost', 'maximizeRealizedSales'])
-const optimizationConstraintMetrics = new Set(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'averageKitchenWait', 'p90KitchenWait', 'abandonmentRate', 'realizedSales', 'serviceLevel', 'staffCount', 'totalSeats', 'afterClosingMinutes'])
+const optimizationVariableTypes = new Set(['staffShiftHeadcount', 'equipmentCapacity', 'seatingUnitCount', 'openingTime', 'closingTime', 'kitchenOperationDuration', 'weekdayStaffHeadcount', 'weekdayOpeningTime', 'weekdayClosingTime', 'processPrepLookaheadDays', 'resourceProcurementLookaheadDays'])
+const optimizationObjectives = new Set(['maximizeMeanOperatingProfit', 'maximizeP10OperatingProfit', 'minimizeAverageWait', 'minimizeLaborCost', 'maximizeRealizedSales', 'maximizeMeanPeriodProfit', 'maximizeP10PeriodProfit', 'minimizePeriodWaste', 'minimizeStockoutLoss'])
+const optimizationConstraintMetrics = new Set(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'averageKitchenWait', 'p90KitchenWait', 'abandonmentRate', 'realizedSales', 'serviceLevel', 'staffCount', 'totalSeats', 'afterClosingMinutes', 'periodWasteCost', 'stockoutLostRevenue', 'purchaseExpenditure', 'endingInventoryValue'])
 
 const issue = (
   severity: ValidationIssue['severity'],
@@ -40,6 +40,9 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (resource.purchasePrice < 0) issues.push(issue('error', 'negative-purchase-package-price', `${resource.name}の購入パッケージ価格は0円以上にしてください。`, path))
     if (resource.minimumPurchaseLot <= 0) issues.push(issue('error', 'invalid-minimum-purchase-packages', `${resource.name}の最低購入パッケージ数は1以上にしてください。`, path))
     if (resource.shelfLifeDays <= 0) issues.push(issue('warning', 'missing-shelf-life', `${resource.name}の保存期限が未設定です。`, path))
+    if ((resource.procurementLeadTimeDays ?? 0) < 0) issues.push(issue('error', 'negative-procurement-lead-time', `${resource.name}の発注Lead Timeは0日以上にしてください。`, path))
+    if ((resource.procurementLookaheadDays ?? 0) < 0) issues.push(issue('error', 'negative-procurement-lookahead', `${resource.name}の発注Lookaheadは0日以上にしてください。`, path))
+    if ((resource.procurementLeadTimeDays ?? 0) > (resource.procurementLookaheadDays ?? 0)) issues.push(issue('warning', 'lead-time-exceeds-lookahead', `${resource.name}のLead Timeが発注Lookaheadを超えています。欠品リスクを確認してください。`, path))
   }
 
   for (const [index, process] of settings.processes.entries()) {
@@ -62,6 +65,10 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     }
     if (process.outputs[0] && Math.abs(process.outputs[0].quantity - process.batchSize) > 0.0001) {
       issues.push(issue('warning', 'primary-output-batch-mismatch', `${process.name}の主Output数量とbatchSizeが一致していません。在庫生産ではbatchSizeを使用します。`, path))
+    }
+    if ((process.prepLookaheadDays ?? 0) < 0) issues.push(issue('error', 'negative-prep-lookahead', `${process.name}の仕込みLookaheadは0日以上にしてください。`, path))
+    if (process.outputs[0] && (process.prepLookaheadDays ?? 0) >= process.outputs[0].shelfLifeDays && process.outputs[0].shelfLifeDays > 0) {
+      issues.push(issue('warning', 'prep-lookahead-exceeds-shelf-life', `${process.name}の仕込みLookaheadが保存期限以上です。自動計画では保存期限内へ制限されます。`, path))
     }
   }
 
@@ -370,7 +377,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns <= 0) {
       issues.push(issue('error', 'invalid-optimization-runs', `${study.name}のMonte Carlo run数は1以上にしてください。`, `${studyPath}.monteCarloRuns`))
     }
-    if (study.objective === 'maximizeP10OperatingProfit' && study.evaluationMode !== 'monteCarlo') {
+    if ((study.objective === 'maximizeP10OperatingProfit' || study.objective === 'maximizeP10PeriodProfit') && study.evaluationMode !== 'monteCarlo') {
       issues.push(issue('error', 'optimization-objective-requires-monte-carlo', `${study.name}のp10利益ObjectiveにはMonte Carlo評価が必要です。`, `${studyPath}.objective`))
     }
     if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns > 0 && study.monteCarloRuns < 30) {
@@ -390,16 +397,22 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
       if (values.length === 0) issues.push(issue('error', 'optimization-variable-empty', `${variable.name}に候補値がありません。`, variablePath))
       const targetExists = variable.type === 'staffShiftHeadcount'
         ? settings.capacity.staffShifts.some((shift) => shift.id === variable.targetId)
+        : variable.type === 'weekdayStaffHeadcount'
+          ? settings.capacity.staffShifts.some((shift) => shift.id === variable.targetId) && variable.day !== undefined && variable.day >= 0 && variable.day <= 6
         : variable.type === 'equipmentCapacity'
           ? settings.capacity.equipment.some((item) => item.id === variable.targetId)
           : variable.type === 'seatingUnitCount'
             ? stochastic.seatingUnits.some((unit) => unit.id === variable.targetId)
             : variable.type === 'kitchenOperationDuration'
               ? settings.capacity.operations.some((operation) => operation.id === variable.targetId)
+              : variable.type === 'processPrepLookaheadDays'
+                ? settings.processes.some((process) => process.id === variable.targetId)
+                : variable.type === 'resourceProcurementLookaheadDays'
+                  ? settings.resources.some((resource) => resource.id === variable.targetId)
               : true
       if (!targetExists) issues.push(issue('error', 'missing-optimization-target', `${variable.name}の探索対象が見つかりません。`, variablePath))
       for (const value of values) {
-        if ((variable.type === 'staffShiftHeadcount' || variable.type === 'seatingUnitCount') && (typeof value !== 'number' || value < 0)) {
+        if ((variable.type === 'staffShiftHeadcount' || variable.type === 'weekdayStaffHeadcount' || variable.type === 'seatingUnitCount' || variable.type === 'processPrepLookaheadDays' || variable.type === 'resourceProcurementLookaheadDays') && (typeof value !== 'number' || value < 0)) {
           issues.push(issue('error', 'negative-optimization-candidate', `${variable.name}の候補人数・卓数は0以上にしてください。`, variablePath))
           break
         }
@@ -407,7 +420,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
           issues.push(issue('error', 'invalid-optimization-candidate', `${variable.name}の容量・時間候補は0より大きくしてください。`, variablePath))
           break
         }
-        if ((variable.type === 'openingTime' || variable.type === 'closingTime') && (typeof value !== 'string' || timeToMinutes(value) === null)) {
+        if ((variable.type === 'openingTime' || variable.type === 'closingTime' || variable.type === 'weekdayOpeningTime' || variable.type === 'weekdayClosingTime') && (typeof value !== 'string' || timeToMinutes(value) === null)) {
           issues.push(issue('error', 'invalid-optimization-time', `${variable.name}の時刻候補が正しくありません。`, variablePath))
           break
         }
@@ -457,6 +470,58 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   }
   if (new Set(settings.optimizationStudies.map((study) => study.id)).size !== settings.optimizationStudies.length) {
     issues.push(issue('error', 'duplicate-optimization-study-id', 'Optimization StudyのIDが重複しています。', 'optimizationStudies'))
+  }
+
+  const planning = settings.planning
+  if (!Number.isInteger(planning.horizonDays) || planning.horizonDays <= 0 || planning.horizonDays > planning.hardMaximumDays || planning.hardMaximumDays > 366) {
+    issues.push(issue('error', 'invalid-planning-horizon', 'Planning Horizonは1〜366日にしてください。', 'planning.horizonDays'))
+  }
+  if (!Number.isInteger(planning.monteCarloRuns) || planning.monteCarloRuns <= 0 || planning.monteCarloRuns > 1_000) {
+    issues.push(issue('error', 'invalid-planning-monte-carlo-runs', '複数日Monte Carlo run数は1〜1,000にしてください。', 'planning.monteCarloRuns'))
+  }
+  if ((planning.maxPrepActiveLaborMinutesPerDay ?? 0) < 0) {
+    issues.push(issue('error', 'invalid-planning-prep-capacity', '1日の仕込みactive上限は0分以上にしてください。', 'planning.maxPrepActiveLaborMinutesPerDay'))
+  }
+  if (planning.horizonDays >= 30 && planning.monteCarloRuns > 1) {
+    issues.push(issue('warning', 'long-multiday-calculation', '30日Monte Carlo / Optimizationは計算量が大きいため、候補数とrun数を確認してください。', 'planning'))
+  }
+  for (const [index, template] of planning.weekdayTemplates.entries()) {
+    const path = `planning.weekdayTemplates.${index}`
+    if (!Number.isInteger(template.day) || template.day < 0 || template.day > 6) issues.push(issue('error', 'invalid-daily-override', '曜日Templateの曜日が正しくありません。', path))
+    if (template.enabled !== false && template.openingTime && template.closingTime && scheduleHours({ openingTime: template.openingTime, closingTime: template.closingTime }) <= 0) {
+      issues.push(issue('error', 'invalid-daily-override', '曜日Templateの営業時間が正しくありません。', path))
+    }
+    if (Object.keys(template.staffHeadcountOverrides ?? {}).some((shiftId) => !settings.capacity.staffShifts.some((shift) => shift.id === shiftId))) {
+      issues.push(issue('error', 'invalid-daily-override', '曜日Templateが存在しないStaffShiftを参照しています。', path))
+    }
+  }
+  if (new Set(planning.dailyOperatingPlans.map((plan) => plan.date)).size !== planning.dailyOperatingPlans.length) {
+    issues.push(issue('error', 'invalid-daily-override', '同じ日付のOverrideが重複しています。', 'planning.dailyOperatingPlans'))
+  }
+  for (const [index, plan] of planning.dailyOperatingPlans.entries()) {
+    const path = `planning.dailyOperatingPlans.${index}`
+    if (!parseLocalDate(plan.date)) issues.push(issue('error', 'invalid-daily-override', `日付Override「${plan.date}」の日付が正しくありません。`, path))
+    if (plan.enabled !== false && plan.openingTime && plan.closingTime && scheduleHours({ openingTime: plan.openingTime, closingTime: plan.closingTime }) <= 0) {
+      issues.push(issue('error', 'invalid-daily-override', `${plan.date}の営業時間が正しくありません。`, path))
+    }
+    if ((plan.mealsPerDay ?? 0) < 0 || Object.values(plan.staffHeadcountOverrides ?? {}).some((value) => value < 0) || Object.values(plan.manualPrepBatches ?? {}).some((value) => value < 0)) {
+      issues.push(issue('error', 'invalid-daily-override', `${plan.date}の食数・人員・仕込み量は0以上にしてください。`, path))
+    }
+    if (Object.keys(plan.staffHeadcountOverrides ?? {}).some((shiftId) => !settings.capacity.staffShifts.some((shift) => shift.id === shiftId))
+      || Object.keys(plan.manualPrepBatches ?? {}).some((processId) => !settings.processes.some((process) => process.id === processId))) {
+      issues.push(issue('error', 'invalid-daily-override', `${plan.date}が存在しないStaffShiftまたはProcessを参照しています。`, path))
+    }
+  }
+  const startDate = parseLocalDate(settings.business.simulationStartDate)
+  const horizonEnd = startDate ? new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate() + planning.horizonDays) : undefined
+  for (const [index, order] of planning.purchaseOrders.entries()) {
+    const path = `planning.purchaseOrders.${index}`
+    const ordered = parseLocalDate(order.orderedDate)
+    const delivery = parseLocalDate(order.deliveryDate)
+    if (!resources.has(order.resourceId)) issues.push(issue('error', 'missing-purchase-order-resource', `発注のResource「${order.resourceId}」が見つかりません。`, path))
+    if (!ordered || !delivery || delivery < ordered) issues.push(issue('error', 'invalid-purchase-order-date', `発注「${order.id}」の発注日・入荷日が正しくありません。`, path))
+    if (order.packageCount <= 0 || order.quantity <= 0 || order.cost < 0) issues.push(issue('error', 'invalid-purchase-order-quantity', `発注「${order.id}」のpackage数・数量・支出が正しくありません。`, path))
+    if (delivery && horizonEnd && delivery >= horizonEnd) issues.push(issue('warning', 'purchase-order-after-horizon', `発注「${order.id}」はPlanning Horizon終了後に入荷します。`, path))
   }
 
   if (settings.resources.some((resource) => resource.isReferencePrice)

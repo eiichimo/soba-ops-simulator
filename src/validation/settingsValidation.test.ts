@@ -259,4 +259,40 @@ describe('settings validation', () => {
     ]
     expect(validateSettings(settings)).toContainEqual(expect.objectContaining({ severity: 'error', code: 'invalid-optimization-business-hours' }))
   })
+
+  it('Phase 8の負Lead Time・Lookaheadと不正HorizonをErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.resources[0].procurementLeadTimeDays = -1
+    settings.resources[0].procurementLookaheadDays = -1
+    settings.processes[0].prepLookaheadDays = -1
+    settings.planning.horizonDays = 0
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['negative-procurement-lead-time', 'negative-procurement-lookahead', 'negative-prep-lookahead', 'invalid-planning-horizon']))
+  })
+
+  it('Phase 8の不存在Resource注文と逆転入荷日をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.planning.purchaseOrders = [{ id: 'invalid', resourceId: 'missing', orderedDate: '2026-08-20', deliveryDate: '2026-08-19', packageCount: 0, quantity: -1, cost: -1, status: 'planned' }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['missing-purchase-order-resource', 'invalid-purchase-order-date', 'invalid-purchase-order-quantity']))
+  })
+
+  it('Phase 8のLead Time・保存期限・Horizon超過をWarningにする', () => {
+    const settings = createSampleSettings()
+    settings.resources[0].procurementLeadTimeDays = 3
+    settings.resources[0].procurementLookaheadDays = 1
+    settings.processes[0].prepLookaheadDays = settings.processes[0].outputs[0].shelfLifeDays
+    settings.planning.purchaseOrders = [{ id: 'late', resourceId: settings.resources[0].id, orderedDate: settings.business.simulationStartDate, deliveryDate: '2099-01-01', packageCount: 1, quantity: 1, cost: 1, status: 'planned' }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['lead-time-exceeds-lookahead', 'prep-lookahead-exceeds-shelf-life', 'purchase-order-after-horizon']))
+  })
+
+  it('Phase 8の不正run数・仕込み上限・Daily参照をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.planning.monteCarloRuns = 0
+    settings.planning.maxPrepActiveLaborMinutesPerDay = -1
+    settings.planning.dailyOperatingPlans = [{ id: 'invalid-plan', date: settings.business.simulationStartDate, staffHeadcountOverrides: { missing: 1 }, manualPrepBatches: { missing: 1 } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-planning-monte-carlo-runs', 'invalid-planning-prep-capacity', 'invalid-daily-override']))
+  })
 })

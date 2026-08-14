@@ -7,16 +7,18 @@ import { DecisionSupportEditor } from './components/DecisionSupportEditor'
 import { CapacityEditor } from './components/CapacityEditor'
 import { DemandSimulationEditor } from './components/DemandSimulationEditor'
 import { OptimizationEditor } from './components/OptimizationEditor'
+import { PlanningEditor } from './components/PlanningEditor'
 import { Icon, type IconName } from './components/ui'
 import { createSampleSettings } from './data/sampleData'
 import type { AppSettings, PeriodKey } from './models/types'
 import { loadSettings, parseSettingsJson, saveSettings } from './storage/settingsStorage'
 
-type PageKey = 'dashboard' | 'operations' | 'capacity' | 'demand' | 'optimization' | 'menus' | 'resources' | 'processes' | 'inventory' | 'actuals' | 'analysis' | 'labor' | 'utilities' | 'comparison' | 'data'
+type PageKey = 'dashboard' | 'operations' | 'planning' | 'capacity' | 'demand' | 'optimization' | 'menus' | 'resources' | 'processes' | 'inventory' | 'actuals' | 'analysis' | 'labor' | 'utilities' | 'comparison' | 'data'
 
 const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[] = [
   { id: 'dashboard', label: 'ダッシュボード', caption: '主要KPI', icon: 'dashboard' },
   { id: 'operations', label: '営業条件', caption: '食数・時間・日数', icon: 'store' },
+  { id: 'planning', label: '運営計画', caption: '複数日・仕込み・発注', icon: 'store' },
   { id: 'capacity', label: '厨房能力', caption: 'Queue・設備・人員', icon: 'capacity' },
   { id: 'demand', label: '来店・客席', caption: 'Party・Monte Carlo', icon: 'trend' },
   { id: 'optimization', label: '最適化', caption: '制約・探索・Pareto', icon: 'trend' },
@@ -79,6 +81,7 @@ export default function App() {
     switch (activePage) {
       case 'operations': return <OperationsEditor {...common} />
       case 'capacity': return <CapacityEditor {...common} />
+      case 'planning': return <PlanningEditor {...common} />
       case 'demand': return <DemandSimulationEditor {...common} />
       case 'optimization': return <OptimizationEditor {...common} />
       case 'menus': return <MenuEditor {...common} />
@@ -118,7 +121,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main>{renderPage()}</main>
-      <footer className="app-footer"><span>SobaOps Phase 7</span><span>既存Simulation Engineで制約付き全探索を行い、有力候補・Pareto・下振れのtrade-offを比較します。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 8</span><span>在庫・仕込み・発注を翌日へ引き継ぎ、週間運営の利益・廃棄・欠品trade-offを比較します。</span></footer>
     </div>
   </div>
 }

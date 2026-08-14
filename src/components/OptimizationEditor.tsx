@@ -34,6 +34,10 @@ const objectiveLabels: Record<OptimizationObjective, string> = {
   minimizeAverageWait: '平均厨房待ちを最小化',
   minimizeLaborCost: '人件費を最小化',
   maximizeRealizedSales: 'Realized Salesを最大化',
+  maximizeMeanPeriodProfit: '期間平均利益を最大化',
+  maximizeP10PeriodProfit: '期間p10利益を最大化',
+  minimizePeriodWaste: '期間廃棄原価を最小化',
+  minimizeStockoutLoss: '欠品失注を最小化',
 }
 
 const variableLabels: Record<OptimizationVariableType, string> = {
@@ -43,6 +47,11 @@ const variableLabels: Record<OptimizationVariableType, string> = {
   openingTime: '開店時刻',
   closingTime: '閉店時刻',
   kitchenOperationDuration: 'KitchenOperation時間',
+  weekdayStaffHeadcount: '曜日別Staff人数',
+  weekdayOpeningTime: '曜日別開店時刻',
+  weekdayClosingTime: '曜日別閉店時刻',
+  processPrepLookaheadDays: '仕込みLookahead',
+  resourceProcurementLookaheadDays: '発注Lookahead',
 }
 
 const constraintLabels: Record<OptimizationConstraintMetric, string> = {
@@ -57,10 +66,14 @@ const constraintLabels: Record<OptimizationConstraintMetric, string> = {
   staffCount: 'Staff人数',
   totalSeats: '総座席数',
   afterClosingMinutes: '閉店後処理時間',
+  periodWasteCost: '期間廃棄原価',
+  stockoutLostRevenue: '欠品失注売上',
+  purchaseExpenditure: '購入支出',
+  endingInventoryValue: '期末在庫価額',
 }
 
 const rateMetrics = new Set<OptimizationConstraintMetric>(['abandonmentRate', 'serviceLevel'])
-const yenMetrics = new Set<OptimizationConstraintMetric>(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit'])
+const yenMetrics = new Set<OptimizationConstraintMetric>(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'periodWasteCost', 'stockoutLostRevenue', 'purchaseExpenditure', 'endingInventoryValue'])
 const waitMetrics = new Set<OptimizationConstraintMetric>(['averageKitchenWait', 'p90KitchenWait', 'afterClosingMinutes'])
 
 const formatConstraintValue = (metric: OptimizationConstraintMetric, value: number) => {
@@ -72,17 +85,19 @@ const formatConstraintValue = (metric: OptimizationConstraintMetric, value: numb
 
 const formatVariableValue = (variable: OptimizationVariable | undefined, value: number | string) => {
   if (!variable || typeof value === 'string') return String(value)
-  if (variable.type === 'staffShiftHeadcount') return `${formatNumber(value)}人`
+  if (variable.type === 'staffShiftHeadcount' || variable.type === 'weekdayStaffHeadcount') return `${formatNumber(value)}人`
   if (variable.type === 'seatingUnitCount') return `${formatNumber(value)}卓`
   if (variable.type === 'kitchenOperationDuration') return `${formatNumber(value)}分`
   return formatNumber(value)
 }
 
 const targetOptions = (settings: AppSettings, type: OptimizationVariableType) => {
-  if (type === 'staffShiftHeadcount') return settings.capacity.staffShifts.map((item) => ({ id: item.id, name: item.name }))
+  if (type === 'staffShiftHeadcount' || type === 'weekdayStaffHeadcount') return settings.capacity.staffShifts.map((item) => ({ id: item.id, name: item.name }))
   if (type === 'equipmentCapacity') return settings.capacity.equipment.map((item) => ({ id: item.id, name: item.name }))
   if (type === 'seatingUnitCount') return settings.capacity.stochasticDemand.seatingUnits.map((item) => ({ id: item.id, name: item.name }))
   if (type === 'kitchenOperationDuration') return settings.capacity.operations.map((item) => ({ id: item.id, name: item.name }))
+  if (type === 'processPrepLookaheadDays') return settings.processes.map((item) => ({ id: item.id, name: item.name }))
+  if (type === 'resourceProcurementLookaheadDays') return settings.resources.map((item) => ({ id: item.id, name: item.name }))
   return []
 }
 
@@ -91,7 +106,11 @@ const baseVariableValue = (settings: AppSettings, variable: OptimizationVariable
   if (variable.type === 'equipmentCapacity') return settings.capacity.equipment.find((item) => item.id === variable.targetId)?.capacity
   if (variable.type === 'seatingUnitCount') return settings.capacity.stochasticDemand.seatingUnits.find((item) => item.id === variable.targetId)?.count
   if (variable.type === 'kitchenOperationDuration') return settings.capacity.operations.find((item) => item.id === variable.targetId)?.durationMinutes
-  if (variable.type === 'openingTime') return settings.business.openingTime
+  if (variable.type === 'processPrepLookaheadDays') return settings.processes.find((item) => item.id === variable.targetId)?.prepLookaheadDays ?? 0
+  if (variable.type === 'resourceProcurementLookaheadDays') return settings.resources.find((item) => item.id === variable.targetId)?.procurementLookaheadDays ?? 0
+  if (variable.type === 'weekdayStaffHeadcount') return settings.planning.weekdayTemplates.find((item) => item.day === variable.day)?.staffHeadcountOverrides?.[variable.targetId ?? ''] ?? settings.capacity.staffShifts.find((item) => item.id === variable.targetId)?.headcount
+  if (variable.type === 'openingTime' || variable.type === 'weekdayOpeningTime') return variable.type === 'weekdayOpeningTime' ? settings.planning.weekdayTemplates.find((item) => item.day === variable.day)?.openingTime ?? settings.business.openingTime : settings.business.openingTime
+  if (variable.type === 'weekdayClosingTime') return settings.planning.weekdayTemplates.find((item) => item.day === variable.day)?.closingTime ?? settings.business.closingTime
   return settings.business.closingTime
 }
 
@@ -106,12 +125,12 @@ const defaultVariable = (settings: AppSettings): OptimizationVariable => ({
   step: 1,
 })
 
-const ParetoChart = ({ candidates }: { candidates: OptimizationCandidateResult[] }) => {
+const ParetoChart = ({ candidates, metric = 'profitWait' }: { candidates: OptimizationCandidateResult[]; metric?: OptimizationStudy['paretoMetric'] }) => {
   if (candidates.length === 0) return <EmptyState>表示できる候補がありません。</EmptyState>
   const width = 820
   const height = 300
   const pad = { top: 25, right: 30, bottom: 48, left: 78 }
-  const waits = candidates.map((candidate) => candidate.metrics.p90KitchenWait)
+  const waits = candidates.map((candidate) => metric === 'profitWaste' ? candidate.metrics.periodWasteCost ?? 0 : metric === 'profitStockout' ? candidate.metrics.stockoutLostRevenue ?? 0 : candidate.metrics.p90KitchenWait)
   const profits = candidates.map((candidate) => candidate.metrics.meanOperatingProfit)
   const minWait = Math.min(...waits)
   const maxWait = Math.max(...waits)
@@ -121,9 +140,9 @@ const ParetoChart = ({ candidates }: { candidates: OptimizationCandidateResult[]
   const y = (value: number) => pad.top + (maxProfit - value) / Math.max(1, maxProfit - minProfit) * (height - pad.top - pad.bottom)
   return <div className="chart-wrap optimization-chart"><svg role="img" aria-label="利益と待ち時間のPareto散布図" viewBox={`0 0 ${width} ${height}`}>
     {[0, 0.25, 0.5, 0.75, 1].map((ratio) => <g key={ratio}><line className="grid-line" x1={pad.left} x2={width - pad.right} y1={pad.top + ratio * (height - pad.top - pad.bottom)} y2={pad.top + ratio * (height - pad.top - pad.bottom)}/></g>)}
-    {candidates.map((candidate) => <circle key={candidate.id} className={candidate.pareto ? 'pareto-dot' : 'candidate-dot'} cx={x(candidate.metrics.p90KitchenWait)} cy={y(candidate.metrics.meanOperatingProfit)} r={candidate.pareto ? 6 : 3.5}/>) }
-    <text className="axis-label" x={pad.left} y={height - 14}>p90待ち {formatNumber(minWait, 1)}分</text>
-    <text className="axis-label" x={width - pad.right} y={height - 14} textAnchor="end">{formatNumber(maxWait, 1)}分</text>
+    {candidates.map((candidate) => { const cost = metric === 'profitWaste' ? candidate.metrics.periodWasteCost ?? 0 : metric === 'profitStockout' ? candidate.metrics.stockoutLostRevenue ?? 0 : candidate.metrics.p90KitchenWait; return <circle key={candidate.id} className={candidate.pareto ? 'pareto-dot' : 'candidate-dot'} cx={x(cost)} cy={y(candidate.metrics.meanOperatingProfit)} r={candidate.pareto ? 6 : 3.5}/> }) }
+    <text className="axis-label" x={pad.left} y={height - 14}>{metric === 'profitWait' ? `p90待ち ${formatNumber(minWait, 1)}分` : `${metric === 'profitWaste' ? '廃棄' : '欠品失注'} ${formatYen(minWait)}`}</text>
+    <text className="axis-label" x={width - pad.right} y={height - 14} textAnchor="end">{metric === 'profitWait' ? `${formatNumber(maxWait, 1)}分` : formatYen(maxWait)}</text>
     <text className="axis-label" x={pad.left - 9} y={pad.top + 4} textAnchor="end">{formatYen(maxProfit)}</text>
     <text className="axis-label" x={pad.left - 9} y={height - pad.bottom} textAnchor="end">{formatYen(minProfit)}</text>
   </svg></div>
@@ -233,27 +252,32 @@ export const OptimizationEditor = ({ settings, onChange }: Props) => {
         <NumberField label="Monte Carlo runs" min={1} max={100} value={study.monteCarloRuns} disabled={study.evaluationMode !== 'monteCarlo'} onChange={(event) => updateStudy({ monteCarloRuns: Math.trunc(numeric(event.target.value)) })}/>
         <NumberField label="Base seed" value={study.baseSeed} onChange={(event) => updateStudy({ baseSeed: Math.trunc(numeric(event.target.value)) })}/>
         <NumberField label="Study候補上限" min={1} max={study.hardCandidateLimit} value={study.maxCandidates} onChange={(event) => updateStudy({ maxCandidates: Math.trunc(numeric(event.target.value)) })}/>
+        <SelectField label="評価単位" value={String(study.planningHorizonDays ?? 1)} onChange={(event) => updateStudy({ planningHorizonDays: numeric(event.target.value) })}><option value="1">1営業日</option><option value="7">7日</option><option value="14">14日</option><option value="30">30日（高負荷）</option></SelectField>
+        <SelectField label="Pareto軸" value={study.paretoMetric ?? 'profitWait'} onChange={(event) => updateStudy({ paretoMetric: event.target.value as OptimizationStudy['paretoMetric'] })}><option value="profitWait">期間利益 vs p90待ち</option><option value="profitWaste">期間利益 vs 廃棄原価</option><option value="profitStockout">期間利益 vs 欠品失注</option></SelectField>
       </div>
     </Panel>
 
     <Panel title="Optimization Variables" caption="各Variableは候補値リスト、またはmin / max / stepから離散候補を生成します。" actions={<Button onClick={() => updateStudy({ variables: [...study.variables, defaultVariable(settings)] })}>＋ Variable</Button>}>
       <div className="optimization-variable-list">{study.variables.map((variable) => {
         const targets = targetOptions(settings, variable.type)
-        const usesRange = variable.values.length === 0 && variable.type !== 'openingTime' && variable.type !== 'closingTime'
+        const isTime = variable.type === 'openingTime' || variable.type === 'closingTime' || variable.type === 'weekdayOpeningTime' || variable.type === 'weekdayClosingTime'
+        const isWeekday = variable.type === 'weekdayStaffHeadcount' || variable.type === 'weekdayOpeningTime' || variable.type === 'weekdayClosingTime'
+        const usesRange = variable.values.length === 0 && !isTime
         return <article className="editor-card" key={variable.id}>
           <div className="form-grid form-grid-4">
             <TextField label="Variable名" value={variable.name} onChange={(event) => updateVariable(variable.id, { name: event.target.value })}/>
             <SelectField label="種類" value={variable.type} onChange={(event) => {
               const type = event.target.value as OptimizationVariableType
               const options = targetOptions(settings, type)
-              updateVariable(variable.id, { type, targetId: options[0]?.id, values: type === 'openingTime' ? [settings.business.openingTime] : type === 'closingTime' ? [settings.business.closingTime] : [], min: type === 'openingTime' || type === 'closingTime' ? undefined : 1, max: type === 'openingTime' || type === 'closingTime' ? undefined : 3, step: type === 'openingTime' || type === 'closingTime' ? undefined : 1 })
+              const timeType = type === 'openingTime' || type === 'closingTime' || type === 'weekdayOpeningTime' || type === 'weekdayClosingTime'
+              updateVariable(variable.id, { type, day: type.startsWith('weekday') ? 0 : undefined, targetId: options[0]?.id, values: timeType ? [type.includes('Opening') || type === 'openingTime' ? settings.business.openingTime : settings.business.closingTime] : [], min: timeType ? undefined : 1, max: timeType ? undefined : 3, step: timeType ? undefined : 1 })
             }}>{Object.entries(variableLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SelectField>
+            {isWeekday && <SelectField label="曜日" value={String(variable.day ?? 0)} onChange={(event) => updateVariable(variable.id, { day: numeric(event.target.value) })}>{['月', '火', '水', '木', '金', '土', '日'].map((label, day) => <option key={day} value={day}>{label}</option>)}</SelectField>}
             {targets.length > 0 ? <SelectField label="対象" value={variable.targetId ?? ''} onChange={(event) => updateVariable(variable.id, { targetId: event.target.value })}>{targets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</SelectField> : <div className="optimization-base-value"><span>Base</span><strong>{formatVariableValue(variable, baseVariableValue(settings, variable) ?? '—')}</strong></div>}
-            <SelectField label="候補入力" value={usesRange ? 'range' : 'values'} onChange={(event) => updateVariable(variable.id, event.target.value === 'range' ? { values: [], min: 1, max: 3, step: 1 } : { values: [baseVariableValue(settings, variable) ?? 1], min: undefined, max: undefined, step: undefined })}><option value="range" disabled={variable.type === 'openingTime' || variable.type === 'closingTime'}>min / max / step</option><option value="values">候補値リスト</option></SelectField>
+            <SelectField label="候補入力" value={usesRange ? 'range' : 'values'} onChange={(event) => updateVariable(variable.id, event.target.value === 'range' ? { values: [], min: 1, max: 3, step: 1 } : { values: [baseVariableValue(settings, variable) ?? 1], min: undefined, max: undefined, step: undefined })}><option value="range" disabled={isTime}>min / max / step</option><option value="values">候補値リスト</option></SelectField>
           </div>
           {usesRange ? <div className="form-grid form-grid-3 optimization-range"><NumberField label="min" value={variable.min ?? 0} onChange={(event) => updateVariable(variable.id, { min: numeric(event.target.value) })}/><NumberField label="max" value={variable.max ?? 0} onChange={(event) => updateVariable(variable.id, { max: numeric(event.target.value) })}/><NumberField label="step" min={0.01} value={variable.step ?? 1} onChange={(event) => updateVariable(variable.id, { step: numeric(event.target.value) })}/></div>
-            : <TextField label={variable.type === 'openingTime' || variable.type === 'closingTime' ? '候補時刻（カンマ区切り）' : '候補値（カンマ区切り）'} value={variable.values.join(', ')} onChange={(event) => {
-              const isTime = variable.type === 'openingTime' || variable.type === 'closingTime'
+            : <TextField label={isTime ? '候補時刻（カンマ区切り）' : '候補値（カンマ区切り）'} value={variable.values.join(', ')} onChange={(event) => {
               const values: Array<number | string> = event.target.value.split(',').map((value) => value.trim()).filter(Boolean).flatMap<number | string>((value) => isTime ? [value] : Number.isFinite(Number(value)) ? [Number(value)] : [])
               updateVariable(variable.id, { values })
             }}/>} 
@@ -274,7 +298,7 @@ export const OptimizationEditor = ({ settings, onChange }: Props) => {
     </Panel>
 
     <Panel className="optimization-run-panel" title="実行前Summary" caption="入力変更だけでは実行しません。Monte Carloでは全候補に同じseed集合を使用します。" actions={<div className="optimization-run-actions">{running && <Button variant="danger" onClick={() => { cancelRef.current = true }}>キャンセル</Button>}<Button variant="primary" disabled={running || candidateCount === 0} onClick={execute}>{running ? '評価中…' : 'Optimization実行'}</Button></div>}>
-      <div className="optimization-summary-grid"><div><span>Objective</span><strong>{objectiveLabels[study.objective]}</strong></div><div><span>Variables</span><strong>{study.variables.length}項目</strong></div><div><span>Constraints</span><strong>{study.constraints.length}件</strong></div><div><span>総候補数</span><strong>{candidateCount.toLocaleString('ja-JP')}通り</strong></div><div><span>評価</span><strong>{study.evaluationMode === 'monteCarlo' ? `MC ${study.monteCarloRuns} runs` : 'deterministic'}</strong></div></div>
+      <div className="optimization-summary-grid"><div><span>Objective</span><strong>{objectiveLabels[study.objective]}</strong></div><div><span>Variables</span><strong>{study.variables.length}項目</strong></div><div><span>Constraints</span><strong>{study.constraints.length}件</strong></div><div><span>総候補数</span><strong>{candidateCount.toLocaleString('ja-JP')}通り</strong></div><div><span>評価</span><strong>{study.evaluationMode === 'monteCarlo' ? `MC ${study.monteCarloRuns} runs` : 'deterministic'} × {study.planningHorizonDays ?? 1}日</strong></div></div>
       {running && <div className="optimization-progress"><progress max={Math.max(1, progress.total)} value={progress.completed}/><span>{progress.completed.toLocaleString('ja-JP')} / {progress.total.toLocaleString('ja-JP')}候補評価済み</span></div>}
       {runMessage && <div className="alert success"><span>{runMessage}</span></div>}
     </Panel>
@@ -288,7 +312,7 @@ export const OptimizationEditor = ({ settings, onChange }: Props) => {
         {displayCandidates.length === 0 && <EmptyState>この条件に該当する候補はありません。</EmptyState>}
       </Panel>
 
-      <Panel title="Pareto Frontier" caption="横軸はp90厨房待ち（短いほど良い）、縦軸は平均営業利益（高いほど良い）。金色が他候補に全面的に劣らない候補です。"><ParetoChart candidates={(runResult?.candidates ?? savedCandidates).slice(0, 1_000)}/></Panel>
+      <Panel title="Pareto Frontier" caption="横軸は選択した負担指標（短い／小さいほど良い）、縦軸は期間営業利益（高いほど良い）。金色が他候補に全面的に劣らない候補です。"><ParetoChart metric={study.paretoMetric} candidates={(runResult?.candidates ?? savedCandidates).slice(0, 1_000)}/></Panel>
 
       {selectedCandidate && <Panel title="Candidate Detail" caption="Baseとの差、Constraint、境界解、設備投資の簡易回収日数を確認します。" actions={<Button variant="primary" onClick={() => saveScenario(selectedCandidate)}>Scenarioとして保存</Button>}>
         <div className="optimization-recommendation"><Badge tone={selectedCandidate.feasible ? 'positive' : 'warning'}>{selectedCandidate.feasible ? '条件内の有力候補' : '条件に最も近い候補'}</Badge><p>Base比で平均営業利益 {formatYen(selectedCandidate.metrics.meanOperatingProfit - (baseMetrics?.meanOperatingProfit ?? 0))}、p90厨房待ち {formatNumber(selectedCandidate.metrics.p90KitchenWait - (baseMetrics?.p90KitchenWait ?? 0), 1)}分、離脱率 {formatPercent(selectedCandidate.metrics.abandonmentRate - (baseMetrics?.abandonmentRate ?? 0))}です。採用判断ではPareto候補と下振れp10も併せて確認してください。</p></div>

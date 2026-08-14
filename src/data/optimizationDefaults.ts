@@ -35,6 +35,8 @@ export const createSampleOptimizationStudy = (): OptimizationStudy => ({
   baseSeed: 12_345,
   maxCandidates: OPTIMIZATION_DEFAULT_MAX_CANDIDATES,
   hardCandidateLimit: OPTIMIZATION_HARD_CANDIDATE_LIMIT,
+  planningHorizonDays: 1,
+  paretoMetric: 'profitWait',
   isReferenceStudy: true,
 })
 
@@ -49,4 +51,6 @@ export const createEmptyOptimizationStudy = (id: string): OptimizationStudy => (
   baseSeed: 12_345,
   maxCandidates: OPTIMIZATION_DEFAULT_MAX_CANDIDATES,
   hardCandidateLimit: OPTIMIZATION_HARD_CANDIDATE_LIMIT,
+  planningHorizonDays: 1,
+  paretoMetric: 'profitWait',
 })
