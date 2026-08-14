@@ -38,8 +38,8 @@ export type OptimizationConstraintMetric = 'laborCost' | 'meanOperatingProfit' |
 export type OptimizationConstraintOperator = '<=' | '>='
 export type OptimizationParetoMetric = 'profitWait' | 'profitWaste' | 'profitStockout'
 export type PurchaseOrderStatus = 'planned' | 'pending' | 'delivered' | 'cancelled'
-export type ImportSourceType = 'sales' | 'purchases' | 'utilities' | 'labor' | 'waste' | 'inventory' | 'generic'
-export type ImportSemanticField = 'date' | 'startDate' | 'endDate' | 'entityName' | 'quantity' | 'unit' | 'amount' | 'reason' | 'inventoryValue'
+export type ImportSourceType = 'sales' | 'purchases' | 'utilities' | 'labor' | 'waste' | 'inventory' | 'dayContext' | 'generic'
+export type ImportSemanticField = 'date' | 'startDate' | 'endDate' | 'entityName' | 'quantity' | 'unit' | 'amount' | 'reason' | 'inventoryValue' | 'holiday' | 'weather' | 'temperature' | 'precipitation' | 'event' | 'notes' | 'importance' | 'specialBusinessDay'
 export type ImportIssueSeverity = 'error' | 'warning'
 export type ImportMergeMode = 'add' | 'replace'
 export type ActualValueSource = 'manual' | 'imported' | 'calculated'
@@ -55,6 +55,14 @@ export type ForecastExclusionReason = 'temporaryClosure' | 'event' | 'equipmentF
 export type ForecastMenuMixMethod = 'recent' | 'weekday'
 export type ForecastDemandCase = 'point' | 'lower' | 'upper' | 'bootstrap'
 export type PlanningDemandSourceType = 'base' | 'manualPlan' | 'forecastSnapshot'
+export type DayContextSource = 'manual' | 'imported' | 'external'
+export type HolidayType = 'none' | 'holiday' | 'substituteHoliday' | 'customHoliday'
+export type WeatherCategory = 'clear' | 'cloudy' | 'rain' | 'snow' | 'other' | 'unknown'
+export type ContextTagCategory = 'event' | 'custom' | 'store'
+export type ContextImportance = 'low' | 'medium' | 'high'
+export type SpecialBusinessDay = 'normal' | 'shortened' | 'extended' | 'temporaryClosure' | 'specialOperation'
+export type ContextFeature = 'holiday' | 'dayBeforeHoliday' | 'dayAfterHoliday' | 'longWeekend' | 'monthStart' | 'monthEnd' | 'weather' | 'temperature' | 'precipitation' | 'event' | 'store'
+export type ContextModelPreset = 'baseOnly' | 'calendar' | 'weather' | 'calendarWeather' | 'custom'
 
 export interface Resource {
   id: string
@@ -398,6 +406,7 @@ export interface ImportEntityMappings {
   resources: Record<string, string>
   laborRoles: Record<string, string>
   wasteReasons: Record<string, WasteReason>
+  contextTags?: Record<string, string>
 }
 
 export interface ImportMappingProfile {
@@ -425,6 +434,8 @@ export interface ImportRecord {
   rowHashes: string[]
   beforeActual: ActualValues
   afterActual: ActualValues
+  beforeDayContexts?: DayContext[]
+  afterDayContexts?: DayContext[]
   undoneAt?: string
 }
 
@@ -511,6 +522,73 @@ export interface DemandObservation {
   exclusionNote?: string
 }
 
+export interface ContextTag {
+  id: string
+  name: string
+  category: ContextTagCategory
+}
+
+export interface DayContextEvent {
+  tagId: string
+  importance?: ContextImportance
+}
+
+export interface DayContext {
+  date: string
+  source: DayContextSource
+  holidayType: HolidayType
+  dayBeforeHoliday?: boolean
+  dayAfterHoliday?: boolean
+  longWeekend?: boolean
+  weatherCategory?: WeatherCategory
+  temperatureC?: number
+  precipitationMm?: number
+  events: DayContextEvent[]
+  customTagIds?: string[]
+  specialBusinessDay: SpecialBusinessDay
+  promotion?: boolean
+  equipmentTrouble?: boolean
+  unusualOperation?: boolean
+  notes?: string
+  excludedFromEffect?: boolean
+  provider?: string
+  retrievedAt?: string
+}
+
+export interface ContextForecastSettings {
+  preset: ContextModelPreset
+  enabledContexts: ContextFeature[]
+  minimumContextObservations: number
+  includeCensored: boolean
+  includeLimitedDays: boolean
+  adjustmentCapEnabled: boolean
+  maximumAbsoluteAdjustment?: number
+}
+
+export interface ContextAdjustment {
+  contextKey: string
+  label: string
+  adjustment: number
+  observationCount: number
+  standardDeviation: number
+  sufficientData: boolean
+}
+
+export interface ContextEffect {
+  contextKey: string
+  label: string
+  observationCount: number
+  meanResidual: number
+  medianResidual: number
+  standardDeviation: number
+  minimumResidual: number
+  maximumResidual: number
+  sufficientData: boolean
+  weekdays: number[]
+  firstDate: string
+  lastDate: string
+}
+
 export interface ForecastExclusion {
   date: string
   reason: ForecastExclusionReason
@@ -542,7 +620,10 @@ export interface ForecastMenuMix {
 
 export interface ForecastPoint {
   date: string
+  baseForecast?: number
   pointForecast: number
+  adjustedForecast?: number
+  contextAdjustments?: ContextAdjustment[]
   lower?: number
   upper?: number
   method: ForecastMethod
@@ -566,6 +647,8 @@ export interface ForecastBacktestPoint {
   method: ForecastMethod
   fallbackMethod?: ForecastMethod
   observationCount: number
+  baseForecast?: number
+  contextAdjustments?: ContextAdjustment[]
 }
 
 export interface ForecastBacktestSummary {
@@ -594,6 +677,9 @@ export interface DemandForecast {
   forecastPoints: ForecastPoint[]
   backtestSummary: ForecastBacktestSummary
   sourceActualPeriodIds: string[]
+  contextSettings?: ContextForecastSettings
+  contextEffects?: ContextEffect[]
+  contextEnabled?: boolean
 }
 
 export interface PlanningDemandSource {
@@ -962,6 +1048,9 @@ export interface AppSettings {
   forecastSettings: ForecastSettings
   demandForecasts: DemandForecast[]
   forecastExclusions: ForecastExclusion[]
+  dayContexts: DayContext[]
+  contextTags: ContextTag[]
+  contextForecastSettings: ContextForecastSettings
 }
 
 export interface CostBreakdown {

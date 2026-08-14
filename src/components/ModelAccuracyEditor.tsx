@@ -38,15 +38,16 @@ type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void 
 type AccuracyTab = 'actuals' | 'import' | 'calibration' | 'backtest'
 
 const sourceLabels: Record<ImportSourceType, string> = {
-  sales: '売上', purchases: '仕入', utilities: '水道光熱', labor: '人件費', waste: '廃棄', inventory: '棚卸', generic: '汎用',
+  sales: '売上', purchases: '仕入', utilities: '水道光熱', labor: '人件費', waste: '廃棄', inventory: '棚卸', dayContext: '日別Context', generic: '汎用',
 }
 const fieldLabels: Record<ImportSemanticField, string> = {
   date: '日付', startDate: '開始日', endDate: '終了日', entityName: '名称／種別', quantity: '数量／時間', unit: '単位', amount: '金額', reason: '理由', inventoryValue: '在庫価額',
+  holiday: '祝日種別', weather: '天気', temperature: '代表気温', precipitation: '降水量', event: 'Event', notes: 'メモ', importance: '重要度', specialBusinessDay: '特殊営業',
 }
-const optionalFields = (source: ImportSourceType): ImportSemanticField[] => source === 'waste' ? ['amount'] : source === 'inventory' ? ['inventoryValue'] : []
+const optionalFields = (source: ImportSourceType): ImportSemanticField[] => source === 'waste' ? ['amount'] : source === 'inventory' ? ['inventoryValue'] : source === 'dayContext' ? ['holiday', 'weather', 'temperature', 'precipitation', 'event', 'importance', 'specialBusinessDay', 'notes'] : []
 
 const entityValues = (dataset: ImportDataset, profile: ImportMappingProfile) => {
-  const column = profile.mappings.entityName
+  const column = dataset.sourceType === 'dayContext' ? profile.mappings.event : profile.mappings.entityName
   return column ? [...new Set(dataset.rows.map((row) => row[column]?.trim()).filter(Boolean))] : []
 }
 
@@ -78,7 +79,7 @@ const ImportWorkspace = ({ settings, onChange }: Props) => {
     try {
       const next = createImportDataset(file.name, sourceType, await file.text(), file.name)
       const mappings = suggestColumnMappings(next.columns)
-      const entityMappings = suggestEntityMappings(settings, next, mappings.entityName)
+      const entityMappings = suggestEntityMappings(settings, next, sourceType === 'dayContext' ? mappings.event : mappings.entityName)
       setDataset(next)
       setDraft({ id: 'draft', name: profileName, sourceType, mappings, entityMappings, updatedAt: new Date().toISOString() })
       setMessage(undefined)
@@ -100,19 +101,21 @@ const ImportWorkspace = ({ settings, onChange }: Props) => {
   const updateMapping = (field: ImportSemanticField, column: string) => {
     if (!draft || !dataset) return
     const mappings = { ...draft.mappings, [field]: column || undefined }
-    const exact = suggestEntityMappings(settings, dataset, mappings.entityName)
+    const exact = suggestEntityMappings(settings, dataset, sourceType === 'dayContext' ? mappings.event : mappings.entityName)
     setDraft({ ...draft, mappings, entityMappings: {
       menuItems: { ...exact.menuItems, ...draft.entityMappings.menuItems },
       resources: { ...exact.resources, ...draft.entityMappings.resources },
       laborRoles: { ...exact.laborRoles, ...draft.entityMappings.laborRoles },
       wasteReasons: { ...draft.entityMappings.wasteReasons },
+      contextTags: { ...(exact.contextTags ?? {}), ...(draft.entityMappings.contextTags ?? {}) },
     } })
   }
 
   const updateEntity = (external: string, id: string) => {
     if (!draft) return
-    const group = sourceType === 'sales' ? 'menuItems' : sourceType === 'labor' ? 'laborRoles' : 'resources'
-    setDraft({ ...draft, entityMappings: { ...draft.entityMappings, [group]: { ...draft.entityMappings[group], [external]: id } } })
+    const group = sourceType === 'sales' ? 'menuItems' : sourceType === 'labor' ? 'laborRoles' : sourceType === 'dayContext' ? 'contextTags' : 'resources'
+    const values = draft.entityMappings[group] ?? {}
+    setDraft({ ...draft, entityMappings: { ...draft.entityMappings, [group]: { ...values, [external]: id } } })
   }
 
   const updateWasteReason = (external: string, reason: string) => {
@@ -173,8 +176,8 @@ const ImportWorkspace = ({ settings, onChange }: Props) => {
       </Panel>
 
       {entityValues(dataset, draft).length > 0 && sourceType !== 'utilities' && <Panel title="4. Entity Mapping" caption="完全一致候補だけ初期選択します。曖昧な名称は手動で選択してください。"><div className="resource-table-wrap"><table className="resource-table"><thead><tr><th>CSV名称</th><th>SobaOps Entity</th></tr></thead><tbody>{entityValues(dataset, draft).map((external) => {
-        const group = sourceType === 'sales' ? draft.entityMappings.menuItems : sourceType === 'labor' ? draft.entityMappings.laborRoles : draft.entityMappings.resources
-        const entities = sourceType === 'sales' ? settings.menuItems : sourceType === 'labor' ? settings.labor : settings.resources
+        const group = sourceType === 'sales' ? draft.entityMappings.menuItems : sourceType === 'labor' ? draft.entityMappings.laborRoles : sourceType === 'dayContext' ? draft.entityMappings.contextTags ?? {} : draft.entityMappings.resources
+        const entities = sourceType === 'sales' ? settings.menuItems : sourceType === 'labor' ? settings.labor : sourceType === 'dayContext' ? settings.contextTags : settings.resources
         return <tr key={external}><td>{external}</td><td><select value={group[external] ?? ''} onChange={(event) => updateEntity(external, event.target.value)}><option value="">未Mapping</option>{entities.map((entity) => <option key={entity.id} value={entity.id}>{entity.name}</option>)}</select></td></tr>
       })}</tbody></table></div></Panel>}
 

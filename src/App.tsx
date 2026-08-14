@@ -24,7 +24,7 @@ const navItems: { id: PageKey; label: string; caption: string; icon: IconName }[
   { id: 'capacity', label: '厨房能力', caption: 'Queue・設備・人員', icon: 'capacity' },
   { id: 'demand', label: '来店・客席', caption: 'Party・Monte Carlo', icon: 'trend' },
   { id: 'optimization', label: '最適化', caption: '制約・探索・Pareto', icon: 'trend' },
-  { id: 'forecast', label: '需要予測', caption: '履歴・Backtest・予測幅', icon: 'trend' },
+  { id: 'forecast', label: '需要予測', caption: '履歴・外部要因・予測幅', icon: 'trend' },
   { id: 'menus', label: 'メニュー', caption: '価格・構成比', icon: 'menu' },
   { id: 'resources', label: '原材料', caption: '仕入・歩留まり', icon: 'box' },
   { id: 'processes', label: '仕込み / レシピ', caption: 'Input → Output', icon: 'recipe' },
@@ -125,7 +125,7 @@ export default function App() {
         <select aria-label="表示画面" value={activePage} onChange={(event) => setActivePage(event.target.value as PageKey)}>{navItems.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}</select>
       </header>
       <main><Suspense fallback={<div className="empty-state">画面を読み込んでいます…</div>}>{renderPage()}</Suspense></main>
-      <footer className="app-footer"><span>SobaOps Phase 10</span><span>Actual履歴をRolling検証し、需要Forecastと予測幅をPlanning・Monte Carloへ安全に接続します。</span></footer>
+      <footer className="app-footer"><span>SobaOps Phase 11</span><span>Day Contextの補正効果をRolling検証し、根拠内訳付きForecastへ接続します。</span></footer>
     </div>
   </div>
 }

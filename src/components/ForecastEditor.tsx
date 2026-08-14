@@ -24,9 +24,10 @@ import type {
 } from '../models/types'
 import { formatNumber, formatPercent } from '../utils/format'
 import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, SelectField, TextField, Toggle } from './ui'
+import { ContextEditor } from './ContextEditor'
 
 type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void }
-type Tab = 'history' | 'models' | 'future' | 'saved'
+type Tab = 'history' | 'context' | 'models' | 'future' | 'saved'
 
 const methodLabels: Record<ForecastMethod, string> = {
   naive: 'Naive（直近値）',
@@ -166,8 +167,8 @@ export const ForecastEditor = ({ settings, onChange }: Props) => {
     : null
 
   return <>
-    <PageTitle eyebrow="HISTORICAL DEMAND / FORECAST / VALIDATION" title="需要予測" description="Actualから需要系列を作り、Rolling Backtestで説明可能なモデルを比較します。Forecastは推定値であり、Base需要を自動変更しません。"/>
-    <div className="period-switch accuracy-tabs">{([['history', '履歴'], ['models', 'モデル比較'], ['future', '将来予測'], ['saved', '予測履歴']] as const).map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
+    <PageTitle eyebrow="HISTORICAL DEMAND / CONTEXT / FORECAST" title="需要予測" description="Actualと日別Contextの関係をRolling Backtestで検証します。Contextは相関候補であり、Base需要を自動変更しません。"/>
+    <div className="period-switch accuracy-tabs">{([['history', '履歴'], ['context', '外部要因'], ['models', 'モデル比較'], ['future', '将来予測'], ['saved', '予測履歴']] as const).map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
     {message && <div className="calculation-note"><Badge tone="reference">Forecast</Badge><span>{message}</span></div>}
 
     {tab === 'history' && <>
@@ -176,6 +177,8 @@ export const ForecastEditor = ({ settings, onChange }: Props) => {
       </Panel>
       <Panel title="Historical Demand" caption="外れ値候補は自動削除しません。学習から除外するかはユーザーが判断します。"><ForecastChart observations={observations}/></Panel>
     </>}
+
+    {tab === 'context' && <ContextEditor settings={settings} onChange={onChange} />}
 
     {tab === 'models' && <>
       <Panel title="Training / Model Settings" caption="営業日のみを対象にし、Forecast対象日より後のActualは使用しません。">
@@ -209,7 +212,7 @@ export const ForecastEditor = ({ settings, onChange }: Props) => {
       {preview ? <>
         <div className="dashboard-grid"><article className="kpi-card"><span>使用モデル</span><strong>{methodLabels[preview.method]}</strong></article><article className="kpi-card"><span>Backtest MAE</span><strong>{preview.backtestSummary.mae === null ? '算出不可' : `${formatNumber(preview.backtestSummary.mae, 1)}食`}</strong></article><article className="kpi-card"><span>Bias</span><strong>{preview.backtestSummary.bias === null ? '算出不可' : `${formatNumber(preview.backtestSummary.bias, 1)}食`}</strong></article><article className="kpi-card"><span>期間中心予測</span><strong>{formatNumber(preview.forecastPoints.reduce((total, point) => total + point.pointForecast, 0), 0)}食</strong></article>{distribution && <article className="kpi-card"><span>期間Residual bootstrap</span><strong>p10 {formatNumber(distribution.p10)} / p90 {formatNumber(distribution.p90)}</strong></article>}</div>
         <Panel title="Forecast Chart" caption="帯は日別の経験的p10〜p90幅です。日別幅の単純合計を期間の確率区間とは扱いません。"><ForecastChart observations={observations} forecast={preview}/></Panel>
-        <Panel title="Future Forecast" actions={<Button variant="primary" onClick={savePreview}>Snapshot保存</Button>}><div className="resource-table-wrap"><table className="resource-table"><thead><tr><th>Date</th><th>Weekday</th><th>Point</th><th>Lower</th><th>Upper</th><th>Method</th><th>履歴数</th><th>Menu Mix</th></tr></thead><tbody>{preview.forecastPoints.map((point) => <tr key={point.date}><td>{point.date}</td><td>{parseLocalDate(point.date)?.toLocaleDateString('ja-JP', { weekday: 'short' })}</td><td>{point.closed ? '営業なし' : formatNumber(point.pointForecast, 1)}</td><td>{point.lower === undefined ? '算出不可' : formatNumber(point.lower, 1)}</td><td>{point.upper === undefined ? '算出不可' : formatNumber(point.upper, 1)}</td><td>{point.fallbackMethod ? `${methodLabels[point.method]} → ${methodLabels[point.fallbackMethod]}` : methodLabels[point.method]}</td><td>{point.observationCount}</td><td>{point.menuMixFallback ? 'Base fallback' : point.menuMix.map((mix) => `${settings.menuItems.find((menu) => menu.id === mix.menuItemId)?.name ?? mix.menuItemId} ${formatPercent(mix.ratio)}`).join(' / ')}</td></tr>)}</tbody></table></div></Panel>
+        <Panel title="Future Forecast" caption="Base＋各Context Contribution＝Adjustedです。Future Weather未入力時は補正しません。" actions={<Button variant="primary" onClick={savePreview}>Snapshot保存</Button>}><div className="resource-table-wrap"><table className="resource-table"><thead><tr><th>Date</th><th>Base</th><th>Context Contribution</th><th>Adjusted</th><th>Lower</th><th>Upper</th><th>Method</th><th>Menu Mix</th></tr></thead><tbody>{preview.forecastPoints.map((point) => <tr key={point.date}><td>{point.date}<small>{parseLocalDate(point.date)?.toLocaleDateString('ja-JP', { weekday: 'short' })}</small></td><td>{point.closed ? '営業なし' : formatNumber(point.baseForecast ?? point.pointForecast, 1)}</td><td>{point.contextAdjustments?.length ? point.contextAdjustments.map((adjustment) => `${adjustment.label} ${adjustment.adjustment >= 0 ? '+' : ''}${formatNumber(adjustment.adjustment, 1)}`).join(' / ') : '補正なし'}</td><td><strong>{point.closed ? '営業なし' : formatNumber(point.pointForecast, 1)}</strong></td><td>{point.lower === undefined ? '算出不可' : formatNumber(point.lower, 1)}</td><td>{point.upper === undefined ? '算出不可' : formatNumber(point.upper, 1)}</td><td>{point.fallbackMethod ? `${methodLabels[point.method]} → ${methodLabels[point.fallbackMethod]}` : methodLabels[point.method]}</td><td>{point.menuMixFallback ? 'Base fallback' : point.menuMix.map((mix) => `${settings.menuItems.find((menu) => menu.id === mix.menuItemId)?.name ?? mix.menuItemId} ${formatPercent(mix.ratio)}`).join(' / ')}</td></tr>)}</tbody></table></div></Panel>
       </> : <EmptyState>Forecast実行後に将来日別予測と経験的予測幅を確認できます。</EmptyState>}
     </>}
 
@@ -217,7 +220,7 @@ export const ForecastEditor = ({ settings, onChange }: Props) => {
       {settings.demandForecasts.length ? <div className="editor-list">{settings.demandForecasts.map((forecast) => {
         const comparisons = compareForecastSnapshotActuals(forecast, observations)
         const mae = comparisons.length ? comparisons.reduce((total, row) => total + Math.abs(row.error), 0) / comparisons.length : null
-        return <article className="editor-card" key={forecast.id}><div className="editor-card-title"><div><strong>{forecast.name}</strong><small>{forecast.createdAt.slice(0, 16).replace('T', ' ')} · Training {forecast.trainingStart}〜{forecast.trainingEnd}</small></div><Badge tone="reference">{methodLabels[forecast.method]}</Badge></div><div className="form-grid form-grid-4"><div><span>対象期間</span><strong>{forecast.targetStart}〜{forecast.targetEnd}</strong></div><div><span>Backtest MAE</span><strong>{forecast.backtestSummary.mae === null ? '算出不可' : `${formatNumber(forecast.backtestSummary.mae, 1)}食`}</strong></div><div><span>Snapshot事後MAE</span><strong>{mae === null ? 'Actual未登録' : `${formatNumber(mae, 1)}食`}</strong></div><div><span>中心合計</span><strong>{formatNumber(forecast.forecastPoints.reduce((total, point) => total + point.pointForecast, 0))}食</strong></div></div><div className="page-action-row"><Button onClick={() => saveScenario(forecast, 'lower')}>低需要Scenario</Button><Button onClick={() => saveScenario(forecast, 'point')}>中心Scenario</Button><Button onClick={() => saveScenario(forecast, 'upper')}>高需要Scenario</Button><Button onClick={() => saveScenario(forecast, 'bootstrap')}>Bootstrap Scenario</Button><Button variant="primary" onClick={() => applyPlanning(forecast)}>Planningへ使用</Button><Button variant="danger" onClick={() => deleteForecast(forecast)}>削除</Button></div></article>
+        return <article className="editor-card" key={forecast.id}><div className="editor-card-title"><div><strong>{forecast.name}</strong><small>{forecast.createdAt.slice(0, 16).replace('T', ' ')} · Training {forecast.trainingStart}〜{forecast.trainingEnd}</small></div><div className="page-action-row"><Badge tone="reference">{methodLabels[forecast.method]}</Badge>{forecast.contextEnabled && <Badge tone="positive">Context補正</Badge>}</div></div><div className="form-grid form-grid-4"><div><span>対象期間</span><strong>{forecast.targetStart}〜{forecast.targetEnd}</strong></div><div><span>Backtest MAE</span><strong>{forecast.backtestSummary.mae === null ? '算出不可' : `${formatNumber(forecast.backtestSummary.mae, 1)}食`}</strong></div><div><span>Snapshot事後MAE</span><strong>{mae === null ? 'Actual未登録' : `${formatNumber(mae, 1)}食`}</strong></div><div><span>中心合計</span><strong>{formatNumber(forecast.forecastPoints.reduce((total, point) => total + point.pointForecast, 0))}食</strong></div></div><div className="page-action-row"><Button onClick={() => saveScenario(forecast, 'lower')}>低需要Scenario</Button><Button onClick={() => saveScenario(forecast, 'point')}>中心Scenario</Button><Button onClick={() => saveScenario(forecast, 'upper')}>高需要Scenario</Button><Button onClick={() => saveScenario(forecast, 'bootstrap')}>Bootstrap Scenario</Button><Button variant="primary" onClick={() => applyPlanning(forecast)}>Planningへ使用</Button><Button variant="danger" onClick={() => deleteForecast(forecast)}>削除</Button></div></article>
       })}</div> : <EmptyState>保存済みForecast Snapshotはありません。</EmptyState>}
     </Panel>}
     <div className="calculation-note"><Badge tone="warning">定義</Badge><span>Forecast Error（来客需要の誤差）とSimulation Error（費用・利益再現の誤差）は別です。販売数はstockout・離脱・Capacity制約により潜在需要を下回る場合があります。</span></div>

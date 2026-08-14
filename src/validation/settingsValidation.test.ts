@@ -367,4 +367,34 @@ describe('settings validation', () => {
     const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
     expect(codes).toEqual(expect.arrayContaining(['sales-demand-proxy', 'insufficient-observations']))
   })
+
+  it('Phase 11の不正DayContext値をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.dayContexts = [{ date: 'bad', source: 'manual', holidayType: 'invalid' as never, weatherCategory: 'invalid' as never, temperatureC: Number.NaN, precipitationMm: -1, events: [{ tagId: 'missing' }], specialBusinessDay: 'invalid' as never }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-day-context-date', 'invalid-holiday-type', 'invalid-weather-category', 'invalid-temperature', 'negative-precipitation', 'missing-context-tag', 'invalid-special-business-day']))
+  })
+
+  it('Phase 11の重複DayContextをErrorにする', () => {
+    const settings = createSampleSettings()
+    const item = { date: '2026-08-14', source: 'manual' as const, holidayType: 'none' as const, events: [], specialBusinessDay: 'normal' as const }
+    settings.dayContexts = [item, { ...item }]
+    expect(validateSettings(settings)).toContainEqual(expect.objectContaining({ severity: 'error', code: 'duplicate-day-context' }))
+  })
+
+  it('Phase 11のContext設定を検証する', () => {
+    const settings = createSampleSettings()
+    settings.contextForecastSettings.minimumContextObservations = 0
+    settings.contextForecastSettings.enabledContexts = ['invalid' as never]
+    settings.contextForecastSettings.adjustmentCapEnabled = true
+    settings.contextForecastSettings.maximumAbsoluteAdjustment = -1
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-context-minimum-observations', 'invalid-context-feature', 'invalid-context-adjustment-cap']))
+  })
+
+  it('Phase 11のContextTag Mapping参照を検証する', () => {
+    const settings = createSampleSettings()
+    settings.importMappingProfiles = [{ id: 'context', name: 'Context', sourceType: 'dayContext', mappings: { date: 'date' }, entityMappings: { menuItems: {}, resources: {}, laborRoles: {}, wasteReasons: {}, contextTags: { 外部: 'missing' } }, updatedAt: '2026-08-14' }]
+    expect(validateSettings(settings)).toContainEqual(expect.objectContaining({ severity: 'error', code: 'invalid-import-entity-mapping' }))
+  })
 })

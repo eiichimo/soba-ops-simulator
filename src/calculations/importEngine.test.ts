@@ -13,6 +13,7 @@ import {
   parseImportAmount,
   parseImportDate,
   prepareImport,
+  suggestColumnMappings,
   suggestEntityMappings,
   undoImport,
 } from './importEngine'
@@ -186,6 +187,51 @@ describe('Actual CSV aggregation', () => {
     const prepared = prepareImport(settings, data, profile('inventory', { date: 'date', entityName: 'item', quantity: 'qty', unit: 'unit', inventoryValue: 'value' }, { resources: { 麺: resource.id } }), period())
     expect(prepared.contribution.inventoryRecords?.[0]).toMatchObject({ resourceId: resource.id, quantity: 2_000, inventoryValue: 2_000 })
     expect(prepared.contribution.endingInventoryValue).toBe(2_000)
+  })
+})
+
+describe('DayContext CSV Import', () => {
+  it('既存Column Mapping EngineでContext列を提案する', () => {
+    expect(suggestColumnMappings(['日付', '祝日', '天気', '気温', '降水量', 'イベント', '備考'])).toMatchObject({ date: '日付', holiday: '祝日', weather: '天気', temperature: '気温', precipitation: '降水量', event: 'イベント', notes: '備考' })
+  })
+
+  it('Context CSVをDayContextへ変換する', () => {
+    const settings = settingsWithPeriod()
+    settings.contextTags = [{ id: 'festival', name: '地域祭り', category: 'event' }]
+    const data = dataset('dayContext', 'date,holiday,weather,temp,rain,event,note\n2026-08-14,holiday,rain,28.5,12,地域祭り,夜イベント')
+    const prepared = prepareImport(settings, data, profile('dayContext', { date: 'date', holiday: 'holiday', weather: 'weather', temperature: 'temp', precipitation: 'rain', event: 'event', notes: 'note' }, { contextTags: { 地域祭り: 'festival' } }), period())
+    expect(prepared.dayContexts[0]).toMatchObject({ date: '2026-08-14', source: 'imported', holidayType: 'holiday', weatherCategory: 'rain', temperatureC: 28.5, precipitationMm: 12, events: [{ tagId: 'festival' }], notes: '夜イベント' })
+  })
+
+  it('未知ContextTagをErrorにする', () => {
+    const data = dataset('dayContext', 'date,event\n2026-08-14,未知イベント')
+    const prepared = prepareImport(settingsWithPeriod(), data, profile('dayContext', { date: 'date', event: 'event' }), period())
+    expect(prepared.issues).toContainEqual(expect.objectContaining({ code: 'unknown-context-tag', severity: 'error' }))
+  })
+
+  it('Context ImportとUndoがActualを変更しない', () => {
+    const settings = settingsWithPeriod()
+    const data = dataset('dayContext', 'date,weather\n2026-08-14,rain')
+    const mapping = profile('dayContext', { date: 'date', weather: 'weather' })
+    const actualBefore = structuredClone(settings.actualPeriods[0].actuals)
+    const imported = applyPreparedImport(settings, data, mapping, period().id, 'add')
+    expect(imported.settings.dayContexts[0]).toMatchObject({ date: '2026-08-14', weatherCategory: 'rain' })
+    expect(imported.settings.actualPeriods[0].actuals).toEqual(actualBefore)
+    expect(undoImport(imported.settings, imported.record.id).dayContexts).toEqual([])
+  })
+
+  it('Context追加Importは未Mapping項目で既存Contextを消さない', () => {
+    const settings = settingsWithPeriod()
+    settings.dayContexts = [{
+      date: '2026-08-14', source: 'manual', holidayType: 'holiday', weatherCategory: 'clear',
+      temperatureC: 30, precipitationMm: 0, events: [], specialBusinessDay: 'shortened', notes: '既存',
+    }]
+    const data = dataset('dayContext', 'date,weather,note\n2026-08-14,rain,追記')
+    const imported = applyPreparedImport(settings, data, profile('dayContext', { date: 'date', weather: 'weather', notes: 'note' }), period().id, 'add')
+    expect(imported.settings.dayContexts[0]).toMatchObject({
+      holidayType: 'holiday', weatherCategory: 'rain', temperatureC: 30,
+      precipitationMm: 0, specialBusinessDay: 'shortened', notes: '既存 / 追記',
+    })
   })
 })
 

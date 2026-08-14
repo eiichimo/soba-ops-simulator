@@ -5,10 +5,11 @@ import { todayLocalDate } from '../calculations/calendar'
 import { createDefaultPlanningSettings } from '../data/planningDefaults'
 import { createDefaultCalibrationSettings } from '../data/calibrationDefaults'
 import { createDefaultForecastSettings } from '../data/forecastDefaults'
+import { createDefaultContextForecastSettings } from '../data/contextDefaults'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 10
+export const CURRENT_SCHEMA_VERSION = 11
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -27,6 +28,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && (candidate.schemaVersion < 8 || !!candidate.planning)
     && (candidate.schemaVersion < 9 || (Array.isArray(candidate.importMappingProfiles) && Array.isArray(candidate.importRecords) && Array.isArray(candidate.calibrationHistory) && !!candidate.calibrationSettings))
     && (candidate.schemaVersion < 10 || (!!candidate.forecastSettings && Array.isArray(candidate.demandForecasts) && Array.isArray(candidate.forecastExclusions) && !!candidate.planning?.demandSource))
+    && (candidate.schemaVersion < 11 || (Array.isArray(candidate.dayContexts) && Array.isArray(candidate.contextTags) && !!candidate.contextForecastSettings))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -166,6 +168,30 @@ export const migrateV9ToV10 = (settings: AppSettings): AppSettings => ({
   forecastExclusions: settings.forecastExclusions ?? [],
 })
 
+export const migrateV10ToV11 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 11,
+  dayContexts: settings.dayContexts ?? [],
+  contextTags: settings.contextTags ?? [],
+  contextForecastSettings: settings.contextForecastSettings ?? createDefaultContextForecastSettings(),
+  importMappingProfiles: settings.importMappingProfiles.map((profile) => ({
+    ...profile,
+    entityMappings: { ...profile.entityMappings, contextTags: profile.entityMappings.contextTags ?? {} },
+  })),
+  demandForecasts: settings.demandForecasts.map((forecast) => ({
+    ...forecast,
+    contextEnabled: forecast.contextEnabled ?? false,
+    contextSettings: forecast.contextSettings ?? createDefaultContextForecastSettings(),
+    contextEffects: forecast.contextEffects ?? [],
+    forecastPoints: forecast.forecastPoints.map((point) => ({
+      ...point,
+      baseForecast: point.baseForecast ?? point.pointForecast,
+      adjustedForecast: point.adjustedForecast ?? point.pointForecast,
+      contextAdjustments: point.contextAdjustments ?? [],
+    })),
+  })),
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
@@ -177,6 +203,7 @@ export const migrateSettings = (settings: AppSettings): AppSettings => {
   if (migrated.schemaVersion === 7) migrated = migrateV7ToV8(migrated)
   if (migrated.schemaVersion === 8) migrated = migrateV8ToV9(migrated)
   if (migrated.schemaVersion === 9) migrated = migrateV9ToV10(migrated)
+  if (migrated.schemaVersion === 10) migrated = migrateV10ToV11(migrated)
   return migrated
 }
 

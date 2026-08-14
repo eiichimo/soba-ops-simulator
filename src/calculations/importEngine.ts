@@ -10,6 +10,9 @@ import type {
   ActualValues,
   ActualWasteRecord,
   AppSettings,
+  DayContext,
+  ContextImportance,
+  HolidayType,
   ImportDataset,
   ImportMappingProfile,
   ImportMergeMode,
@@ -19,6 +22,8 @@ import type {
   ImportValidationIssue,
   Unit,
   WasteReason,
+  WeatherCategory,
+  SpecialBusinessDay,
 } from '../models/types'
 
 export const CSV_ROW_LIMIT = 50_000
@@ -144,7 +149,7 @@ const exactEntity = (external: string, entities: Array<{ id: string; name: strin
 }
 
 const defaultEntityMappings = (): ImportMappingProfile['entityMappings'] => ({
-  menuItems: {}, resources: {}, laborRoles: {}, wasteReasons: {},
+  menuItems: {}, resources: {}, laborRoles: {}, wasteReasons: {}, contextTags: {},
 })
 
 export const suggestEntityMappings = (
@@ -164,6 +169,9 @@ export const suggestEntityMappings = (
     } else if (dataset.sourceType === 'labor') {
       const id = exactEntity(external, settings.labor)
       if (id) result.laborRoles[external] = id
+    } else if (dataset.sourceType === 'dayContext') {
+      const id = exactEntity(external, settings.contextTags)
+      if (id) result.contextTags![external] = id
     }
   }
   return result
@@ -176,6 +184,7 @@ export const requiredImportFields = (sourceType: ImportSourceType): ImportSemant
   if (sourceType === 'labor') return ['date', 'entityName', 'quantity', 'amount']
   if (sourceType === 'waste') return ['date', 'entityName', 'quantity', 'unit', 'reason']
   if (sourceType === 'inventory') return ['date', 'entityName', 'quantity', 'unit']
+  if (sourceType === 'dayContext') return ['date']
   return []
 }
 
@@ -189,6 +198,14 @@ const columnAliases: Record<ImportSemanticField, string[]> = {
   amount: ['amount', 'salesamount', 'revenue', 'cost', '金額', '売上額', '料金', '人件費', '購入支出', '廃棄原価'],
   reason: ['reason', '理由', '廃棄理由'],
   inventoryValue: ['inventoryvalue', '在庫価額', '棚卸価額'],
+  holiday: ['holiday', 'holidaytype', '祝日', '祝日種別'],
+  weather: ['weather', 'weathercategory', '天気', '天候'],
+  temperature: ['temperature', 'temperaturec', '気温', '代表気温'],
+  precipitation: ['precipitation', 'precipitationmm', '降水量'],
+  event: ['event', 'eventtag', 'イベント', 'イベント名'],
+  notes: ['notes', 'note', 'メモ', '備考'],
+  importance: ['importance', '重要度'],
+  specialBusinessDay: ['specialbusinessday', '特殊営業', '営業区分'],
 }
 
 export const suggestColumnMappings = (columns: string[]): Partial<Record<ImportSemanticField, string>> => {
@@ -332,6 +349,7 @@ export interface PrepareImportOptions {
 
 export interface PreparedImport {
   contribution: ActualValues
+  dayContexts: DayContext[]
   issues: ImportValidationIssue[]
   validRowIndexes: number[]
   errorRowIndexes: number[]
@@ -348,6 +366,7 @@ export const prepareImport = (
 ): PreparedImport => {
   const issues: ImportValidationIssue[] = []
   const contribution = emptyActuals()
+  const dayContexts: DayContext[] = []
   const validRowIndexes: number[] = []
   const errorRowIndexes: number[] = []
   const skippedRowIndexes: number[] = []
@@ -356,7 +375,7 @@ export const prepareImport = (
     const column = profile.mappings[field]
     if (!column || !dataset.columns.includes(column)) issues.push({ severity: 'error', code: 'required-column-unmapped', message: `必須項目${field}がCSV列へMappingされていません。`, column })
   }
-  if (issues.some((item) => item.severity === 'error')) return { contribution, issues, validRowIndexes, errorRowIndexes: dataset.rows.map((_, index) => index), skippedRowIndexes, targetFields: [] }
+  if (issues.some((item) => item.severity === 'error')) return { contribution, dayContexts, issues, validRowIndexes, errorRowIndexes: dataset.rows.map((_, index) => index), skippedRowIndexes, targetFields: [] }
 
   dataset.rows.forEach((row, index) => {
     const rowNumber = index + 2
@@ -379,7 +398,7 @@ export const prepareImport = (
       return parsed
     }
 
-    if (dataset.sourceType !== 'utilities' && dataset.sourceType !== 'generic' && !entityId) {
+    if (dataset.sourceType !== 'utilities' && dataset.sourceType !== 'generic' && dataset.sourceType !== 'dayContext' && !entityId) {
       error('unknown-entity', `「${entityName || '空欄'}」のEntity Mappingがありません。`, profile.mappings.entityName)
     }
 
@@ -496,6 +515,48 @@ export const prepareImport = (
       contribution.inventoryRecords!.push(inventory)
       if (typeof inventoryValue === 'number' && date === actualPeriod.startDate) contribution.openingInventoryValue = addOptional(contribution.openingInventoryValue, inventoryValue)
       if (typeof inventoryValue === 'number' && date === actualPeriod.endDate) contribution.endingInventoryValue = addOptional(contribution.endingInventoryValue, inventoryValue)
+    } else if (dataset.sourceType === 'dayContext') {
+      const date = parseDateField('date')
+      const holidayRaw = fieldValue(row, profile, 'holiday').trim()
+      const weatherRaw = fieldValue(row, profile, 'weather').trim()
+      const temperatureRaw = fieldValue(row, profile, 'temperature')
+      const precipitationRaw = fieldValue(row, profile, 'precipitation')
+      const eventRaw = fieldValue(row, profile, 'event').trim()
+      const importanceRaw = fieldValue(row, profile, 'importance').trim()
+      const specialRaw = fieldValue(row, profile, 'specialBusinessDay').trim()
+      const holidays: HolidayType[] = ['none', 'holiday', 'substituteHoliday', 'customHoliday']
+      const weatherValues: WeatherCategory[] = ['clear', 'cloudy', 'rain', 'snow', 'other', 'unknown']
+      const importanceValues: ContextImportance[] = ['low', 'medium', 'high']
+      const specialValues: SpecialBusinessDay[] = ['normal', 'shortened', 'extended', 'temporaryClosure', 'specialOperation']
+      const holiday = (holidayRaw || 'none') as HolidayType
+      const weather = weatherRaw ? weatherRaw as WeatherCategory : undefined
+      const importance = importanceRaw ? importanceRaw as ContextImportance : undefined
+      const specialBusinessDay = (specialRaw || 'normal') as SpecialBusinessDay
+      const temperature = temperatureRaw.trim() === '' ? undefined : parseImportNumber(temperatureRaw)
+      const precipitation = precipitationRaw.trim() === '' ? undefined : parseImportNumber(precipitationRaw)
+      const tagId = eventRaw ? profile.entityMappings.contextTags?.[eventRaw] : undefined
+      if (!holidays.includes(holiday)) error('invalid-holiday-type', `祝日種別「${holidayRaw}」を認識できません。`, profile.mappings.holiday)
+      if (weather && !weatherValues.includes(weather)) error('invalid-weather-category', `天気「${weatherRaw}」を認識できません。`, profile.mappings.weather)
+      if (temperature === null) error('invalid-temperature', `気温「${temperatureRaw}」を数値として読めません。`, profile.mappings.temperature)
+      if (precipitation === null || (typeof precipitation === 'number' && precipitation < 0)) error('invalid-precipitation', `降水量「${precipitationRaw}」が正しくありません。`, profile.mappings.precipitation)
+      if (importance && !importanceValues.includes(importance)) error('invalid-context-importance', `重要度「${importanceRaw}」を認識できません。`, profile.mappings.importance)
+      if (!specialValues.includes(specialBusinessDay)) error('invalid-special-business-day', `営業区分「${specialRaw}」を認識できません。`, profile.mappings.specialBusinessDay)
+      if (eventRaw && !tagId) error('unknown-context-tag', `Event「${eventRaw}」のContextTag Mappingがありません。`, profile.mappings.event)
+      if (date && (date < actualPeriod.startDate || date > actualPeriod.endDate)) warning('outside-actual-period', `${date}はActualPeriod外です。`)
+      issues.push(...rowIssues)
+      if (rowIssues.some((item) => item.severity === 'error')) return void errorRowIndexes.push(index)
+      if (date! < actualPeriod.startDate || date! > actualPeriod.endDate) return void skippedRowIndexes.push(index)
+      dayContexts.push({
+        date: date!,
+        source: 'imported',
+        holidayType: holiday,
+        weatherCategory: weather,
+        temperatureC: typeof temperature === 'number' ? temperature : undefined,
+        precipitationMm: typeof precipitation === 'number' ? precipitation : undefined,
+        events: tagId ? [{ tagId, importance }] : [],
+        specialBusinessDay,
+        notes: fieldValue(row, profile, 'notes').trim() || undefined,
+      })
     } else {
       issues.push(...rowIssues)
     }
@@ -508,8 +569,9 @@ export const prepareImport = (
         : dataset.sourceType === 'labor' ? ['laborCost', 'laborHours', 'laborRecords']
           : dataset.sourceType === 'waste' ? ['wasteCost', 'wasteRecords', 'resourceRecords.waste']
             : dataset.sourceType === 'inventory' ? ['openingInventoryValue', 'endingInventoryValue', 'inventoryRecords']
+              : dataset.sourceType === 'dayContext' ? ['dayContexts']
               : []
-  return { contribution, issues, validRowIndexes, errorRowIndexes, skippedRowIndexes, targetFields }
+  return { contribution, dayContexts, issues, validRowIndexes, errorRowIndexes, skippedRowIndexes, targetFields }
 }
 
 const resetSource = (actuals: ActualValues, sourceType: ImportSourceType): ActualValues => {
@@ -574,6 +636,32 @@ export const mergeActualContribution = (current: ActualValues, contribution: Act
   return next
 }
 
+export const mergeDayContexts = (current: DayContext[], incoming: DayContext[], mode: ImportMergeMode) => {
+  const incomingDates = new Set(incoming.map((item) => item.date))
+  const result = (mode === 'replace' ? current.filter((item) => !incomingDates.has(item.date)) : current).map((item) => structuredClone(item))
+  for (const context of incoming) {
+    const index = result.findIndex((item) => item.date === context.date)
+    if (index < 0) result.push(structuredClone(context))
+    else if (mode === 'replace') result[index] = structuredClone(context)
+    else {
+      const existing = result[index]
+      result[index] = {
+        ...existing,
+        source: 'imported',
+        holidayType: context.holidayType === 'none' ? existing.holidayType : context.holidayType,
+        weatherCategory: context.weatherCategory ?? existing.weatherCategory,
+        temperatureC: context.temperatureC ?? existing.temperatureC,
+        precipitationMm: context.precipitationMm ?? existing.precipitationMm,
+        specialBusinessDay: context.specialBusinessDay === 'normal' ? existing.specialBusinessDay : context.specialBusinessDay,
+        events: [...new Map([...existing.events, ...context.events].map((event) => [event.tagId, event])).values()],
+        customTagIds: [...new Set([...(existing.customTagIds ?? []), ...(context.customTagIds ?? [])])],
+        notes: [existing.notes, context.notes].filter(Boolean).join(' / ') || undefined,
+      }
+    }
+  }
+  return result.sort((left, right) => left.date.localeCompare(right.date))
+}
+
 export const datasetHash = (dataset: ImportDataset) => hashText(`${dataset.sourceType}\u0000${dataset.columns.join('\u0001')}\u0000${dataset.rowHashes.join('\u0001')}`)
 
 export const findDuplicateImports = (settings: AppSettings, dataset: ImportDataset, actualPeriodId: string) => {
@@ -603,7 +691,11 @@ export const applyPreparedImport = (
   const prepared = prepareImport(settings, dataset, profile, period, options)
   if (prepared.validRowIndexes.length === 0) throw new Error('Import可能な正常行がありません。')
   const beforeActual = structuredClone(period.actuals)
-  const afterActual = mergeActualContribution(beforeActual, prepared.contribution, dataset.sourceType, mergeMode)
+  const afterActual = dataset.sourceType === 'dayContext' ? structuredClone(beforeActual) : mergeActualContribution(beforeActual, prepared.contribution, dataset.sourceType, mergeMode)
+  const beforeDayContexts = structuredClone(settings.dayContexts)
+  const afterDayContexts = dataset.sourceType === 'dayContext'
+    ? mergeDayContexts(beforeDayContexts, prepared.dayContexts, mergeMode)
+    : beforeDayContexts
   const id = `import-${hashText(`${dataset.id}:${actualPeriodId}:${now}`)}`
   const record: ImportRecord = {
     id,
@@ -621,6 +713,8 @@ export const applyPreparedImport = (
     rowHashes: prepared.validRowIndexes.map((index) => dataset.rowHashes[index]),
     beforeActual: structuredClone(beforeActual),
     afterActual: structuredClone(afterActual),
+    beforeDayContexts: dataset.sourceType === 'dayContext' ? beforeDayContexts : undefined,
+    afterDayContexts: dataset.sourceType === 'dayContext' ? afterDayContexts : undefined,
   }
   return {
     settings: {
@@ -628,8 +722,9 @@ export const applyPreparedImport = (
       actualPeriods: settings.actualPeriods.map((item) => item.id === actualPeriodId ? {
         ...item,
         actuals: structuredClone(afterActual),
-        sourceMetadata: [...(item.sourceMetadata ?? []), { source: 'imported', fields: prepared.targetFields, importRecordId: id, recordedAt: now }],
+        sourceMetadata: dataset.sourceType === 'dayContext' ? item.sourceMetadata : [...(item.sourceMetadata ?? []), { source: 'imported', fields: prepared.targetFields, importRecordId: id, recordedAt: now }],
       } : item),
+      dayContexts: afterDayContexts,
       importRecords: [...settings.importRecords, record],
     },
     record,
@@ -642,6 +737,15 @@ export const undoImport = (settings: AppSettings, importRecordId: string, now = 
   if (!record || record.undoneAt) throw new Error('取り消せるImportが見つかりません。')
   const period = settings.actualPeriods.find((item) => item.id === record.actualPeriodId)
   if (!period) throw new Error('Import先ActualPeriodが見つかりません。')
+  if (record.sourceType === 'dayContext') {
+    if (!record.beforeDayContexts || !record.afterDayContexts) throw new Error('Context ImportのUndo情報がありません。')
+    if (JSON.stringify(settings.dayContexts) !== JSON.stringify(record.afterDayContexts)) throw new Error('Import後にDayContextが変更されているため、安全にUndoできません。')
+    return {
+      ...settings,
+      dayContexts: structuredClone(record.beforeDayContexts),
+      importRecords: settings.importRecords.map((item) => item.id === record.id ? { ...item, undoneAt: now } : item),
+    }
+  }
   if (JSON.stringify(period.actuals) !== JSON.stringify(record.afterActual)) throw new Error('Import後に実績が変更されているため、安全にUndoできません。最新変更を確認してください。')
   return {
     ...settings,

@@ -3,6 +3,7 @@ import { createDefaultStochasticDemand } from '../../data/demandDefaults'
 import { createDefaultPlanningSettings } from '../../data/planningDefaults'
 import { createDefaultCalibrationSettings } from '../../data/calibrationDefaults'
 import { createDefaultForecastSettings } from '../../data/forecastDefaults'
+import { createDefaultContextForecastSettings } from '../../data/contextDefaults'
 
 export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSettings => {
   const business = {
@@ -12,7 +13,7 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
   }
   const demandProfile = { id: 'benchmark-demand', name: '検算需要', timeSlots: [{ id: 'benchmark-slot', startTime: '09:00', endTime: '17:00', meals: 100 }] }
   return ({
-  schemaVersion: 10,
+  schemaVersion: 11,
   business,
   resources: [{
     id: 'benchmark-noodle',
@@ -101,6 +102,9 @@ export const createBenchmarkStore = (simulationStartDate = '2026-01-05'): AppSet
   forecastSettings: createDefaultForecastSettings(),
   demandForecasts: [],
   forecastExclusions: [],
+  dayContexts: [],
+  contextTags: [],
+  contextForecastSettings: createDefaultContextForecastSettings(),
   capacity: {
     demandMode: 'deterministic',
     equipment: [{ id: 'benchmark-station', name: '検算設備', category: 'other', capacity: 1, capacityUnit: '食', concurrentJobs: 1, enabled: true, isReferenceCapacity: false }],
