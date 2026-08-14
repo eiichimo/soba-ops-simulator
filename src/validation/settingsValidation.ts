@@ -1,13 +1,18 @@
 import { getScheduleForDate, parseLocalDate, scheduleHours, timeToMinutes } from '../calculations/calendar'
 import { calculateOptimizationCandidateCount, expandOptimizationVariableValues, OPTIMIZATION_WARNING_CANDIDATES } from '../calculations/optimizationEngine'
 import { areUnitsCompatible } from '../calculations/units'
-import { buildDemandObservations, buildForecastWarnings } from '../calculations/forecastEngine'
+import { buildDemandObservations, buildForecastWarnings, rollingContextForecastBacktest } from '../calculations/forecastEngine'
+import { buildContextWarnings } from '../calculations/contextEngine'
 import type { AppSettings, SourceRef, ValidationIssue } from '../models/types'
 
 const optimizationVariableTypes = new Set(['staffShiftHeadcount', 'equipmentCapacity', 'seatingUnitCount', 'openingTime', 'closingTime', 'kitchenOperationDuration', 'weekdayStaffHeadcount', 'weekdayOpeningTime', 'weekdayClosingTime', 'processPrepLookaheadDays', 'resourceProcurementLookaheadDays'])
 const optimizationObjectives = new Set(['maximizeMeanOperatingProfit', 'maximizeP10OperatingProfit', 'minimizeAverageWait', 'minimizeLaborCost', 'maximizeRealizedSales', 'maximizeMeanPeriodProfit', 'maximizeP10PeriodProfit', 'minimizePeriodWaste', 'minimizeStockoutLoss'])
 const optimizationConstraintMetrics = new Set(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'averageKitchenWait', 'p90KitchenWait', 'abandonmentRate', 'realizedSales', 'serviceLevel', 'staffCount', 'totalSeats', 'afterClosingMinutes', 'periodWasteCost', 'stockoutLostRevenue', 'purchaseExpenditure', 'endingInventoryValue'])
 const forecastMethods = new Set(['naive', 'movingAverage', 'weightedMovingAverage', 'weekdayAverage', 'weekdayWeightedAverage', 'weekdayTrend'])
+const holidayTypes = new Set(['none', 'holiday', 'substituteHoliday', 'customHoliday'])
+const weatherCategories = new Set(['clear', 'cloudy', 'rain', 'snow', 'other', 'unknown'])
+const specialBusinessDays = new Set(['normal', 'shortened', 'extended', 'temporaryClosure', 'specialOperation'])
+const contextFeatures = new Set(['holiday', 'dayBeforeHoliday', 'dayAfterHoliday', 'longWeekend', 'monthStart', 'monthEnd', 'weather', 'temperature', 'precipitation', 'event', 'store'])
 
 const issue = (
   severity: ValidationIssue['severity'],
@@ -387,6 +392,9 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (snapshot.forecastPoints.some((point) => !parseLocalDate(point.date) || !Number.isFinite(point.pointForecast) || point.pointForecast < 0 || (point.lower ?? 0) < 0 || (point.upper ?? 0) < 0 || (point.lower !== undefined && point.upper !== undefined && point.lower > point.upper))) {
       issues.push(issue('error', 'invalid-forecast-point', `${snapshot.name}に不正なForecast Pointがあります。`, path))
     }
+    if (snapshot.forecastPoints.some((point) => (point.baseForecast !== undefined && (!Number.isFinite(point.baseForecast) || point.baseForecast < 0)) || (point.contextAdjustments ?? []).some((adjustment) => !Number.isFinite(adjustment.adjustment) || adjustment.observationCount < 0))) {
+      issues.push(issue('error', 'invalid-context-forecast-snapshot', `${snapshot.name}のContext補正情報が破損しています。`, path))
+    }
   }
   if (new Set(settings.demandForecasts.map((item) => item.id)).size !== settings.demandForecasts.length) issues.push(issue('error', 'duplicate-forecast-id', 'Forecast Snapshot IDが重複しています。', 'demandForecasts'))
   const forecastIds = new Set(settings.demandForecasts.map((item) => item.id))
@@ -398,7 +406,31 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
   })
   buildForecastWarnings(settings, buildDemandObservations(settings)).forEach((warning) => issues.push(issue('warning', warning.code, warning.message, 'forecastSettings')))
 
-  const importSourceTypes = new Set(['sales', 'purchases', 'utilities', 'labor', 'waste', 'inventory', 'generic'])
+  const contextTagIds = new Set(settings.contextTags.map((tag) => tag.id))
+  if (contextTagIds.size !== settings.contextTags.length) issues.push(issue('error', 'duplicate-context-tag', 'ContextTag IDが重複しています。', 'contextTags'))
+  const contextDates = new Set<string>()
+  settings.dayContexts.forEach((context, index) => {
+    const path = `dayContexts.${index}`
+    if (!parseLocalDate(context.date)) issues.push(issue('error', 'invalid-day-context-date', 'DayContextの日付が正しくありません。', path))
+    if (contextDates.has(context.date)) issues.push(issue('error', 'duplicate-day-context', `${context.date}のDayContextが重複しています。`, path))
+    contextDates.add(context.date)
+    if (!holidayTypes.has(context.holidayType)) issues.push(issue('error', 'invalid-holiday-type', `${context.date}のHoliday Typeが正しくありません。`, path))
+    if (context.weatherCategory && !weatherCategories.has(context.weatherCategory)) issues.push(issue('error', 'invalid-weather-category', `${context.date}のWeather Categoryが正しくありません。`, path))
+    if (context.temperatureC !== undefined && !Number.isFinite(context.temperatureC)) issues.push(issue('error', 'invalid-temperature', `${context.date}の代表気温が正しくありません。`, path))
+    if (context.precipitationMm !== undefined && (!Number.isFinite(context.precipitationMm) || context.precipitationMm < 0)) issues.push(issue('error', 'negative-precipitation', `${context.date}の降水量は0以上にしてください。`, path))
+    if (!specialBusinessDays.has(context.specialBusinessDay)) issues.push(issue('error', 'invalid-special-business-day', `${context.date}の特殊営業区分が正しくありません。`, path))
+    for (const tagId of [...context.events.map((event) => event.tagId), ...(context.customTagIds ?? [])]) if (!contextTagIds.has(tagId)) issues.push(issue('error', 'missing-context-tag', `${context.date}が参照するContextTag「${tagId}」が見つかりません。`, path))
+  })
+  const contextSettings = settings.contextForecastSettings
+  if (!Number.isInteger(contextSettings.minimumContextObservations) || contextSettings.minimumContextObservations <= 0) issues.push(issue('error', 'invalid-context-minimum-observations', 'Context最低Observation数は1以上にしてください。', 'contextForecastSettings'))
+  if (contextSettings.enabledContexts.some((feature) => !contextFeatures.has(feature))) issues.push(issue('error', 'invalid-context-feature', '不正なContext Featureがあります。', 'contextForecastSettings'))
+  if (contextSettings.adjustmentCapEnabled && (contextSettings.maximumAbsoluteAdjustment === undefined || !Number.isFinite(contextSettings.maximumAbsoluteAdjustment) || contextSettings.maximumAbsoluteAdjustment < 0)) issues.push(issue('error', 'invalid-context-adjustment-cap', 'Context補正Capは0以上にしてください。', 'contextForecastSettings'))
+  const contextObservations = buildDemandObservations(settings)
+  const contextComparison = rollingContextForecastBacktest(settings, contextObservations)
+  buildContextWarnings(settings, contextObservations, contextComparison.effects, contextComparison.base.mae, contextComparison.context.mae).forEach((warning) => issues.push(issue('warning', warning.code, warning.message, 'contextForecastSettings')))
+  if (contextSettings.enabledContexts.length > 0 && settings.demandForecasts.some((snapshot) => snapshot.forecastPoints.some((point) => !point.closed && !settings.dayContexts.some((context) => context.date === point.date)))) issues.push(issue('warning', 'future-context-missing', '保存Forecast期間にDayContext未入力日があります。未入力日は補正なしです。', 'dayContexts'))
+
+  const importSourceTypes = new Set(['sales', 'purchases', 'utilities', 'labor', 'waste', 'inventory', 'dayContext', 'generic'])
   for (const [index, profile] of settings.importMappingProfiles.entries()) {
     const path = `importMappingProfiles.${index}`
     if (!profile.name.trim() || !importSourceTypes.has(profile.sourceType)) issues.push(issue('error', 'invalid-import-mapping-profile', 'Import Mapping Profileの名前またはsourceTypeが正しくありません。', path))
@@ -406,6 +438,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     for (const resourceId of Object.values(profile.entityMappings.resources)) if (!resources.has(resourceId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先Resource「${resourceId}」が見つかりません。`, path))
     for (const roleId of Object.values(profile.entityMappings.laborRoles)) if (!settings.labor.some((role) => role.id === roleId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先LaborRole「${roleId}」が見つかりません。`, path))
     for (const reason of Object.values(profile.entityMappings.wasteReasons)) if (!['trimLoss', 'cookingLoss', 'spoilage', 'unsold', 'mistake'].includes(reason)) issues.push(issue('error', 'invalid-import-entity-mapping', `廃棄理由Mapping「${reason}」が正しくありません。`, path))
+    for (const tagId of Object.values(profile.entityMappings.contextTags ?? {})) if (!contextTagIds.has(tagId)) issues.push(issue('error', 'invalid-import-entity-mapping', `Mapping先ContextTag「${tagId}」が見つかりません。`, path))
   }
   if (new Set(settings.importMappingProfiles.map((profile) => profile.id)).size !== settings.importMappingProfiles.length) issues.push(issue('error', 'duplicate-import-profile-id', 'Import Mapping Profile IDが重複しています。', 'importMappingProfiles'))
 

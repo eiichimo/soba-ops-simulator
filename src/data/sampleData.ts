@@ -5,6 +5,7 @@ import { createSampleOptimizationStudy } from './optimizationDefaults'
 import { createDefaultPlanningSettings } from './planningDefaults'
 import { createDefaultCalibrationSettings } from './calibrationDefaults'
 import { createDefaultForecastSettings } from './forecastDefaults'
+import { createDefaultContextForecastSettings } from './contextDefaults'
 
 const resource = (
   id: string,
@@ -58,7 +59,7 @@ export const createSampleSettings = (): AppSettings => {
     })),
   }
   return ({
-  schemaVersion: 10,
+  schemaVersion: 11,
   business,
   resources: [
     resource('raw-soba', '生そば', 'noodle', 1_000, 'g', 750, 0.98, { shelfLifeDays: 3 }),
@@ -288,6 +289,9 @@ export const createSampleSettings = (): AppSettings => {
   forecastSettings: createDefaultForecastSettings(),
   demandForecasts: [],
   forecastExclusions: [],
+  dayContexts: [],
+  contextTags: [],
+  contextForecastSettings: createDefaultContextForecastSettings(),
   })
 }
 

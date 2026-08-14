@@ -11,10 +11,13 @@ import type {
   ForecastPoint,
   ForecastSelectionMetric,
   ForecastSettings,
+  ContextEffect,
+  ContextForecastSettings,
   Scenario,
 } from '../models/types'
 import { createSeededRandom } from './demandEngine'
 import { formatLocalDate, parseLocalDate } from './calendar'
+import { applyContextEffects, calculateContextEffects, type ContextResidualRecord } from './contextEngine'
 
 const DAY_MS = 86_400_000
 const METHODS: ForecastMethod[] = ['naive', 'movingAverage', 'weightedMovingAverage', 'weekdayAverage', 'weekdayWeightedAverage', 'weekdayTrend']
@@ -262,6 +265,87 @@ export const rollingForecastBacktest = (
   return calculateForecastMetrics(details, method)
 }
 
+export interface ContextBacktestComparison {
+  base: ForecastBacktestSummary
+  context: ForecastBacktestSummary
+  effects: ContextEffect[]
+  improvement: {
+    mae: number | null
+    rmse: number | null
+    bias: number | null
+    wape: number | null
+  }
+}
+
+const metricImprovement = (base: number | null, context: number | null, absolute = false) => (
+  base === null || context === null ? null : (absolute ? Math.abs(base) - Math.abs(context) : base - context)
+)
+
+export const rollingContextForecastBacktest = (
+  settings: AppSettings,
+  observations: DemandObservation[],
+  method = settings.forecastSettings.method,
+  contextSettings: ContextForecastSettings = settings.contextForecastSettings,
+): ContextBacktestComparison => {
+  const forecastSettings: ForecastSettings = {
+    ...settings.forecastSettings,
+    includeCensored: contextSettings.includeCensored,
+    includeLimitedDays: contextSettings.includeLimitedDays,
+  }
+  const baseDetails: ForecastBacktestPoint[] = []
+  const contextDetails: ForecastBacktestPoint[] = []
+  const historicalBaseResiduals: ContextResidualRecord[] = []
+  const priorContextResiduals: number[] = []
+  for (const target of [...observations].sort((left, right) => left.date.localeCompare(right.date))) {
+    if (target.excluded || (!forecastSettings.includeCensored && target.quality === 'censored') || (!forecastSettings.includeLimitedDays && target.quality === 'limited')) continue
+    const prediction = forecastDemandValue(observations, target.date, forecastSettings, method)
+    if (!prediction) continue
+    const effects = calculateContextEffects(historicalBaseResiduals, settings.dayContexts, settings.contextTags, contextSettings)
+    const context = settings.dayContexts.find((item) => item.date === target.date)
+    const adjusted = applyContextEffects(prediction.value, target.date, context, settings.contextTags, effects, contextSettings)
+    const interval = residualForecastInterval(adjusted.adjustedForecast, priorContextResiduals, forecastSettings)
+    const baseError = prediction.value - target.value
+    const baseResidual = target.value - prediction.value
+    const contextError = adjusted.adjustedForecast - target.value
+    const contextResidual = target.value - adjusted.adjustedForecast
+    const shared = {
+      date: target.date,
+      trainingEndDate: prediction.training.at(-1)?.date ?? '',
+      actual: target.value,
+      method,
+      fallbackMethod: prediction.fallbackMethod,
+      observationCount: prediction.observationCount,
+    }
+    baseDetails.push({ ...shared, forecast: prediction.value, error: baseError, residual: baseResidual, baseForecast: prediction.value, contextAdjustments: [] })
+    contextDetails.push({
+      ...shared,
+      forecast: adjusted.adjustedForecast,
+      error: contextError,
+      residual: contextResidual,
+      lower: interval?.lower,
+      upper: interval?.upper,
+      intervalCovered: interval ? target.value >= interval.lower && target.value <= interval.upper : undefined,
+      baseForecast: prediction.value,
+      contextAdjustments: adjusted.adjustments,
+    })
+    historicalBaseResiduals.push({ date: target.date, actual: target.value, baseForecast: prediction.value, residual: baseResidual })
+    priorContextResiduals.push(contextResidual)
+  }
+  const base = calculateForecastMetrics(baseDetails, method)
+  const context = calculateForecastMetrics(contextDetails, method)
+  return {
+    base,
+    context,
+    effects: calculateContextEffects(historicalBaseResiduals, settings.dayContexts, settings.contextTags, contextSettings),
+    improvement: {
+      mae: metricImprovement(base.mae, context.mae),
+      rmse: metricImprovement(base.rmse, context.rmse),
+      bias: metricImprovement(base.bias, context.bias, true),
+      wape: metricImprovement(base.wape, context.wape),
+    },
+  }
+}
+
 export const compareForecastMethods = (observations: DemandObservation[], settings: ForecastSettings) => (
   METHODS.map((method) => rollingForecastBacktest(observations, settings, method))
 )
@@ -313,22 +397,31 @@ export const generateFutureForecast = (
 ) => {
   const start = parseLocalDate(startDate)
   if (!start || !Number.isInteger(horizonDays) || horizonDays <= 0) throw new Error('Forecast開始日またはHorizonが正しくありません。')
-  const backtest = rollingForecastBacktest(observations, settings.forecastSettings, method)
+  const contextEnabled = settings.contextForecastSettings.enabledContexts.length > 0
+  const contextComparison = rollingContextForecastBacktest(settings, observations, method)
+  const backtest = contextEnabled ? contextComparison.context : rollingForecastBacktest(observations, settings.forecastSettings, method)
   const points: ForecastPoint[] = []
   for (let index = 0; index < horizonDays; index += 1) {
     const date = addDays(start, index)
     const dateText = formatLocalDate(date)
     if (!businessOpen(settings, date)) {
-      points.push({ date: dateText, pointForecast: 0, method, observationCount: 0, closed: true, menuMix: baseMenuMix(settings), menuMixFallback: true })
+      points.push({ date: dateText, baseForecast: 0, pointForecast: 0, adjustedForecast: 0, contextAdjustments: [], method, observationCount: 0, closed: true, menuMix: baseMenuMix(settings), menuMixFallback: true })
       continue
     }
     const prediction = forecastDemandValue(observations, dateText, settings.forecastSettings, method)
     if (!prediction) throw new Error(`${dateText}のForecastに必要なObservationがありません。`)
-    const interval = residualForecastInterval(prediction.value, backtest.residuals, settings.forecastSettings)
+    const context = settings.dayContexts.find((item) => item.date === dateText)
+    const adjusted = contextEnabled
+      ? applyContextEffects(prediction.value, dateText, context, settings.contextTags, contextComparison.effects, settings.contextForecastSettings)
+      : { adjustedForecast: prediction.value, adjustments: [] }
+    const interval = residualForecastInterval(adjusted.adjustedForecast, backtest.residuals, settings.forecastSettings)
     const menu = forecastMenuMix(settings, prediction.training, dateText, settings.forecastSettings)
     points.push({
       date: dateText,
-      pointForecast: prediction.value,
+      baseForecast: prediction.value,
+      pointForecast: adjusted.adjustedForecast,
+      adjustedForecast: adjusted.adjustedForecast,
+      contextAdjustments: adjusted.adjustments,
       lower: interval?.lower,
       upper: interval?.upper,
       method,
@@ -339,7 +432,7 @@ export const generateFutureForecast = (
       menuMixFallback: menu.fallback,
     })
   }
-  return { points, backtest }
+  return { points, backtest, contextComparison }
 }
 
 export const createDemandForecast = (
@@ -367,6 +460,9 @@ export const createDemandForecast = (
     forecastPoints: structuredClone(generated.points),
     backtestSummary: structuredClone(generated.backtest),
     sourceActualPeriodIds: [...new Set(training.flatMap((item) => item.actualPeriodId ? [item.actualPeriodId] : []))],
+    contextSettings: structuredClone(settings.contextForecastSettings),
+    contextEffects: structuredClone(generated.contextComparison.effects),
+    contextEnabled: settings.contextForecastSettings.enabledContexts.length > 0,
   }
 }
 
