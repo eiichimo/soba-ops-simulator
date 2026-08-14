@@ -20,6 +20,7 @@ import { runMonteCarlo, runMonteCarloAsync } from './monteCarloEngine'
 import { simulateCustomerJourney } from './seatingEngine'
 import { timeToMinutes } from './calendar'
 import { deriveMultiDaySeed, runMultiDayMonteCarlo, runMultiDayMonteCarloAsync, simulateMultiDay } from './multiDayEngine'
+import { applyForecastDemandToSettings } from './forecastEngine'
 
 const EPSILON = 1e-9
 
@@ -392,7 +393,7 @@ const evaluateCandidate = (
   const candidateSettings = applyOptimizationCandidate(settings, study, values)
   const metrics = (study.planningHorizonDays ?? 1) > 1
     ? multiDayMetrics(candidateSettings, study)
-    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(candidateSettings, study) : deterministicMetrics(candidateSettings, study.baseSeed)
+    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(candidateSettings, study) : deterministicMetrics(applyForecastDemandToSettings(candidateSettings), study.baseSeed)
   const violations = evaluateOptimizationConstraints(metrics, study.constraints)
   const coverageWarning = demandCoverageWarning(settings, candidateSettings)
   return {
@@ -424,7 +425,7 @@ const evaluateCandidateAsync = async (
     ? await multiDayMetricsAsync(candidateSettings, study)
     : study.evaluationMode === 'monteCarlo'
       ? await monteCarloMetricsAsync(candidateSettings, study)
-      : deterministicMetrics(candidateSettings, study.baseSeed)
+      : deterministicMetrics(applyForecastDemandToSettings(candidateSettings), study.baseSeed)
   const violations = evaluateOptimizationConstraints(metrics, study.constraints)
   const coverageWarning = demandCoverageWarning(settings, candidateSettings)
   return {
@@ -511,14 +512,28 @@ const assertCandidateBusinessHours = (
   if (invalid) throw new Error('開店時刻以上の閉店時刻となる候補があります。営業時間候補を見直してください。')
 }
 
+const settingsForStudyDemand = (settings: AppSettings, study: OptimizationStudy): AppSettings => study.demandForecastId ? {
+  ...settings,
+  planning: {
+    ...settings.planning,
+    demandSource: {
+      type: 'forecastSnapshot',
+      forecastId: study.demandForecastId,
+      demandCase: study.forecastDemandCase ?? 'point',
+      sampleUncertainty: study.sampleForecastUncertainty ?? false,
+    },
+  },
+} : settings
+
 export const runOptimization = (settings: AppSettings, study: OptimizationStudy): OptimizationRunResult => {
   assertStudyCanRun(study)
+  const evaluationSettings = settingsForStudyDemand(settings, study)
   const combinations = generateOptimizationCandidates(study.variables, study.hardCandidateLimit)
-  assertCandidateBusinessHours(settings, study, combinations)
+  assertCandidateBusinessHours(evaluationSettings, study, combinations)
   const baseMetrics = (study.planningHorizonDays ?? 1) > 1
-    ? multiDayMetrics(settings, study)
-    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(settings, study) : deterministicMetrics(settings, study.baseSeed)
-  const candidates = combinations.map((values, index) => evaluateCandidate(settings, study, values, index))
+    ? multiDayMetrics(evaluationSettings, study)
+    : study.evaluationMode === 'monteCarlo' ? monteCarloMetrics(evaluationSettings, study) : deterministicMetrics(applyForecastDemandToSettings(evaluationSettings), study.baseSeed)
+  const candidates = combinations.map((values, index) => evaluateCandidate(evaluationSettings, study, values, index))
   return finalizeOptimization(study, baseMetrics, candidates)
 }
 
@@ -529,15 +544,16 @@ export const runOptimizationAsync = async (
   isCancelled?: () => boolean,
 ): Promise<OptimizationRunResult> => {
   assertStudyCanRun(study)
+  const evaluationSettings = settingsForStudyDemand(settings, study)
   const combinations = generateOptimizationCandidates(study.variables, study.hardCandidateLimit)
-  assertCandidateBusinessHours(settings, study, combinations)
+  assertCandidateBusinessHours(evaluationSettings, study, combinations)
   const baseMetrics = (study.planningHorizonDays ?? 1) > 1
-    ? await multiDayMetricsAsync(settings, study)
-    : study.evaluationMode === 'monteCarlo' ? await monteCarloMetricsAsync(settings, study) : deterministicMetrics(settings, study.baseSeed)
+    ? await multiDayMetricsAsync(evaluationSettings, study)
+    : study.evaluationMode === 'monteCarlo' ? await monteCarloMetricsAsync(evaluationSettings, study) : deterministicMetrics(applyForecastDemandToSettings(evaluationSettings), study.baseSeed)
   const candidates: OptimizationCandidateResult[] = []
   for (let index = 0; index < combinations.length; index += 1) {
     if (isCancelled?.()) throw new OptimizationCancelledError()
-    candidates.push(await evaluateCandidateAsync(settings, study, combinations[index], index))
+    candidates.push(await evaluateCandidateAsync(evaluationSettings, study, combinations[index], index))
     onProgress?.(index + 1, combinations.length)
     if ((index + 1) % 2 === 0 && index + 1 < combinations.length) await new Promise<void>((resolve) => setTimeout(resolve, 0))
   }

@@ -19,7 +19,7 @@ import type {
   OptimizationVariableType,
 } from '../models/types'
 import { formatNumber, formatPercent, formatYen } from '../utils/format'
-import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, SelectField, TextField } from './ui'
+import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, SelectField, TextField, Toggle } from './ui'
 
 type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void }
 type CandidateFilter = 'all' | 'feasible' | 'pareto'
@@ -254,7 +254,10 @@ export const OptimizationEditor = ({ settings, onChange }: Props) => {
         <NumberField label="Study候補上限" min={1} max={study.hardCandidateLimit} value={study.maxCandidates} onChange={(event) => updateStudy({ maxCandidates: Math.trunc(numeric(event.target.value)) })}/>
         <SelectField label="評価単位" value={String(study.planningHorizonDays ?? 1)} onChange={(event) => updateStudy({ planningHorizonDays: numeric(event.target.value) })}><option value="1">1営業日</option><option value="7">7日</option><option value="14">14日</option><option value="30">30日（高負荷）</option></SelectField>
         <SelectField label="Pareto軸" value={study.paretoMetric ?? 'profitWait'} onChange={(event) => updateStudy({ paretoMetric: event.target.value as OptimizationStudy['paretoMetric'] })}><option value="profitWait">期間利益 vs p90待ち</option><option value="profitWaste">期間利益 vs 廃棄原価</option><option value="profitStockout">期間利益 vs 欠品失注</option></SelectField>
+        <SelectField label="需要Source" value={study.demandForecastId ?? ''} onChange={(event) => updateStudy({ demandForecastId: event.target.value || undefined })}><option value="">Base / Planning需要</option>{settings.demandForecasts.map((forecast) => <option key={forecast.id} value={forecast.id}>{forecast.name}</option>)}</SelectField>
+        <SelectField label="Forecast需要ケース" value={study.forecastDemandCase ?? 'point'} disabled={!study.demandForecastId} onChange={(event) => updateStudy({ forecastDemandCase: event.target.value as OptimizationStudy['forecastDemandCase'] })}><option value="point">中心</option><option value="lower">低需要</option><option value="upper">高需要</option><option value="bootstrap">Residual bootstrap</option></SelectField>
       </div>
+      {study.demandForecastId && <Toggle checked={study.sampleForecastUncertainty ?? false} onChange={(checked) => updateStudy({ sampleForecastUncertainty: checked })} label="Monte Carloで日別Forecast uncertaintyをResidualからsampling"/>}
     </Panel>
 
     <Panel title="Optimization Variables" caption="各Variableは候補値リスト、またはmin / max / stepから離散候補を生成します。" actions={<Button onClick={() => updateStudy({ variables: [...study.variables, defaultVariable(settings)] })}>＋ Variable</Button>}>

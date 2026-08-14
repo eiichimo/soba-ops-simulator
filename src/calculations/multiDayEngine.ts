@@ -19,6 +19,7 @@ import { calculatePurchaseOrder } from './inventoryEngine'
 import { calculateStatistics } from './monteCarloEngine'
 import { simulateCustomerJourney } from './seatingEngine'
 import { tryConvertQuantity } from './units'
+import { applyForecastDemandToSettings } from './forecastEngine'
 
 const EPSILON = 1e-9
 
@@ -329,7 +330,9 @@ export const simulateMultiDay = (settings: AppSettings, options: MultiDaySimulat
   for (let dayIndex = 0; dayIndex < horizonDays; dayIndex += 1) {
     const date = addDays(start, dayIndex)
     const dateString = formatLocalDate(date)
-    const dailySettings = resolveDailyOperatingSettings(settings, date)
+    const daySeed = deriveMultiDaySeed(options.baseSeed ?? planning.baseSeed, options.runIndex ?? 0, dayIndex)
+    const stochastic = options.stochastic ?? settings.capacity.demandMode === 'stochastic'
+    const dailySettings = applyForecastDemandToSettings(resolveDailyOperatingSettings(settings, date), dateString, daySeed, stochastic)
     const schedule = dailySettings.business.weekdays.find((item) => item.day === mondayFirstDay(date))!
     const operating = schedule.enabled && scheduleHours(schedule) > 0
     const placedOrders = [...manualOrdersForDate(settings, dateString), ...autoPurchaseOrders(settings, date, lots, pending)]
@@ -344,14 +347,13 @@ export const simulateMultiDay = (settings: AppSettings, options: MultiDaySimulat
       if (resource && order.quantity > 0) lots.push(purchaseLot(order, resource))
     }
 
-    const daySeed = deriveMultiDaySeed(options.baseSeed ?? planning.baseSeed, options.runIndex ?? 0, dayIndex)
     let completedMenuIds: string[] = []
     let demandMeals = 0
     let averageWaitMinutes = 0
     let serviceLevel = 1
     let abandonmentRate = 0
     if (operating) {
-      if (options.stochastic ?? dailySettings.capacity.demandMode === 'stochastic') {
+      if (stochastic) {
         const journey = simulateCustomerJourney(dailySettings, daySeed)
         completedMenuIds = journey.capacity.orders.filter((order) => order.status === 'completed').map((order) => order.menuItemId)
         demandMeals = journey.arrivedGuests

@@ -7,6 +7,7 @@ import type {
 } from '../models/types'
 import { applyScenarioOverrides } from './decisionSupport'
 import { simulateCustomerJourney } from './seatingEngine'
+import { applyForecastDemandToSettings } from './forecastEngine'
 
 export const quantile = (values: number[], probability: number) => {
   if (values.length === 0) return 0
@@ -101,7 +102,8 @@ export const runMonteCarlo = (
   assertRunCount(settings, requestedRuns)
   const summaries = Array.from({ length: requestedRuns }, (_, runIndex) => {
     const seed = (Math.trunc(baseSeed) + runIndex) >>> 0
-    return summaryFromRun(runIndex, seed, simulateCustomerJourney(settings, seed))
+    const runSettings = applyForecastDemandToSettings(settings, settings.business.simulationStartDate, seed, true)
+    return summaryFromRun(runIndex, seed, simulateCustomerJourney(runSettings, seed))
   })
   return aggregateRuns(settings, requestedRuns, baseSeed, summaries)
 }
@@ -117,7 +119,8 @@ export const runMonteCarloAsync = async (
   const chunkSize = 5
   for (let runIndex = 0; runIndex < requestedRuns; runIndex += 1) {
     const seed = (Math.trunc(baseSeed) + runIndex) >>> 0
-    summaries.push(summaryFromRun(runIndex, seed, simulateCustomerJourney(settings, seed)))
+    const runSettings = applyForecastDemandToSettings(settings, settings.business.simulationStartDate, seed, true)
+    summaries.push(summaryFromRun(runIndex, seed, simulateCustomerJourney(runSettings, seed)))
     onProgress?.(runIndex + 1, requestedRuns)
     if ((runIndex + 1) % chunkSize === 0 && runIndex + 1 < requestedRuns) {
       await new Promise<void>((resolve) => setTimeout(resolve, 0))

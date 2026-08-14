@@ -15,6 +15,7 @@ export const createDefaultPlanningSettings = (business: BusinessSettings): Plann
   monteCarloRuns: 100,
   baseSeed: 8_017,
   targetProfit: 300_000,
+  demandSource: { type: 'base' },
 })
 
 export const planningSettingsFor = (settings: Pick<AppSettings, 'business' | 'planning'>): PlanningSettings => (

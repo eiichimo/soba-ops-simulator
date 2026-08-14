@@ -46,6 +46,15 @@ export type ActualValueSource = 'manual' | 'imported' | 'calculated'
 export type CalibrationConfidence = 'low' | 'medium' | 'high'
 export type CalibrationTargetType = 'utilityUnitPrice' | 'resourceUnitPrice' | 'laborHourlyWage' | 'demandMeals' | 'menuAveragePrice'
 export type BacktestMetricKey = 'revenue' | 'meals' | 'usageCost' | 'purchaseExpenditure' | 'laborCost' | 'water' | 'gas' | 'electricity' | 'operatingProfit'
+export type ForecastMethod = 'naive' | 'movingAverage' | 'weightedMovingAverage' | 'weekdayAverage' | 'weekdayWeightedAverage' | 'weekdayTrend'
+export type ForecastSelectionMetric = 'mae' | 'rmse' | 'wape'
+export type ForecastTrainingWindow = 'all' | 'last4Weeks' | 'last8Weeks' | 'last12Weeks' | 'custom'
+export type DemandObservationSource = 'guestCount' | 'salesCount' | 'manual'
+export type DemandObservationQuality = 'good' | 'censored' | 'limited'
+export type ForecastExclusionReason = 'temporaryClosure' | 'event' | 'equipmentFailure' | 'weather' | 'other'
+export type ForecastMenuMixMethod = 'recent' | 'weekday'
+export type ForecastDemandCase = 'point' | 'lower' | 'upper' | 'bootstrap'
+export type PlanningDemandSourceType = 'base' | 'manualPlan' | 'forecastSnapshot'
 
 export interface Resource {
   id: string
@@ -322,6 +331,28 @@ export interface ActualValues {
   operatingHours?: number
   operatingProfit?: number
   simpleCashFlow?: number
+  guestCount?: number
+  demandCount?: number
+  stockoutLostMeals?: number
+  abandonmentGuests?: number
+  capacityUnservedMeals?: number
+  earlyClosing?: boolean
+  dailyDemandRecords?: ActualDailyDemandRecord[]
+}
+
+export interface ActualDailyDemandRecord {
+  date: string
+  guestCount?: number
+  demandCount?: number
+  salesCount?: number
+  menuCounts?: ActualMenuSales[]
+  stockoutLostMeals?: number
+  abandonmentGuests?: number
+  capacityUnservedMeals?: number
+  operatingHours?: number
+  expectedOperatingHours?: number
+  earlyClosing?: boolean
+  closed?: boolean
 }
 
 export interface ActualPeriod {
@@ -465,11 +496,119 @@ export interface BacktestAccuracyMetric {
   mapeSampleCount: number
 }
 
+export interface DemandObservation {
+  id: string
+  date: string
+  value: number
+  source: DemandObservationSource
+  quality: DemandObservationQuality
+  censoredReasons: Array<'stockout' | 'abandonment' | 'capacity' | 'earlyClosing'>
+  possibleDemandFloor?: number
+  menuCounts?: ActualMenuSales[]
+  actualPeriodId?: string
+  excluded: boolean
+  exclusionReason?: ForecastExclusionReason
+  exclusionNote?: string
+}
+
+export interface ForecastExclusion {
+  date: string
+  reason: ForecastExclusionReason
+  note?: string
+}
+
+export interface ForecastSettings {
+  method: ForecastMethod
+  horizonDays: number
+  windowSize: number
+  minimumObservations: number
+  includeCensored: boolean
+  includeLimitedDays: boolean
+  trainingWindow: ForecastTrainingWindow
+  trainingStart?: string
+  trainingEnd?: string
+  selectionMetric: ForecastSelectionMetric
+  intervalLowerPercentile: number
+  intervalUpperPercentile: number
+  minimumIntervalResiduals: number
+  menuMixMethod: ForecastMenuMixMethod
+  bootstrapRuns: number
+}
+
+export interface ForecastMenuMix {
+  menuItemId: string
+  ratio: number
+}
+
+export interface ForecastPoint {
+  date: string
+  pointForecast: number
+  lower?: number
+  upper?: number
+  method: ForecastMethod
+  fallbackMethod?: ForecastMethod
+  observationCount: number
+  closed: boolean
+  menuMix: ForecastMenuMix[]
+  menuMixFallback: boolean
+}
+
+export interface ForecastBacktestPoint {
+  date: string
+  trainingEndDate: string
+  forecast: number
+  actual: number
+  error: number
+  residual: number
+  lower?: number
+  upper?: number
+  intervalCovered?: boolean
+  method: ForecastMethod
+  fallbackMethod?: ForecastMethod
+  observationCount: number
+}
+
+export interface ForecastBacktestSummary {
+  method: ForecastMethod
+  count: number
+  mae: number | null
+  rmse: number | null
+  bias: number | null
+  wape: number | null
+  mape: number | null
+  intervalCoverage: number | null
+  residuals: number[]
+  details: ForecastBacktestPoint[]
+}
+
+export interface DemandForecast {
+  id: string
+  name: string
+  createdAt: string
+  trainingStart: string
+  trainingEnd: string
+  targetStart: string
+  targetEnd: string
+  method: ForecastMethod
+  settings: ForecastSettings
+  forecastPoints: ForecastPoint[]
+  backtestSummary: ForecastBacktestSummary
+  sourceActualPeriodIds: string[]
+}
+
+export interface PlanningDemandSource {
+  type: PlanningDemandSourceType
+  forecastId?: string
+  demandCase?: ForecastDemandCase
+  sampleUncertainty?: boolean
+}
+
 export interface ScenarioOverrides {
   business?: {
     mealsPerDay?: number
     hoursPerDay?: number
     operatingDaysPerWeek?: number
+    simulationStartDate?: string
   }
   averageSellingPriceMultiplier?: number
   laborWageMultiplier?: number
@@ -487,6 +626,8 @@ export interface ScenarioOverrides {
   weekdayClosingTimeOverrides?: Record<string, string>
   processPrepLookaheadDaysOverrides?: Record<string, number>
   resourceProcurementLookaheadDaysOverrides?: Record<string, number>
+  planningDailyDemandOverrides?: Record<string, number>
+  planningDemandSource?: PlanningDemandSource
 }
 
 export interface Scenario {
@@ -713,6 +854,9 @@ export interface OptimizationStudy {
   hardCandidateLimit: number
   planningHorizonDays?: number
   paretoMetric?: OptimizationParetoMetric
+  demandForecastId?: string
+  forecastDemandCase?: ForecastDemandCase
+  sampleForecastUncertainty?: boolean
   isReferenceStudy?: boolean
   result?: OptimizationStudySavedResult
 }
@@ -786,6 +930,7 @@ export interface PlanningSettings {
   monteCarloRuns: number
   baseSeed: number
   targetProfit: number
+  demandSource: PlanningDemandSource
 }
 
 export interface AppSettings {
@@ -814,6 +959,9 @@ export interface AppSettings {
   importRecords: ImportRecord[]
   calibrationHistory: CalibrationHistoryEntry[]
   calibrationSettings: CalibrationSettings
+  forecastSettings: ForecastSettings
+  demandForecasts: DemandForecast[]
+  forecastExclusions: ForecastExclusion[]
 }
 
 export interface CostBreakdown {

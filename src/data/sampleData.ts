@@ -4,6 +4,7 @@ import { createSampleCapacitySettings } from './capacityDefaults'
 import { createSampleOptimizationStudy } from './optimizationDefaults'
 import { createDefaultPlanningSettings } from './planningDefaults'
 import { createDefaultCalibrationSettings } from './calibrationDefaults'
+import { createDefaultForecastSettings } from './forecastDefaults'
 
 const resource = (
   id: string,
@@ -57,7 +58,7 @@ export const createSampleSettings = (): AppSettings => {
     })),
   }
   return ({
-  schemaVersion: 9,
+  schemaVersion: 10,
   business,
   resources: [
     resource('raw-soba', '生そば', 'noodle', 1_000, 'g', 750, 0.98, { shelfLifeDays: 3 }),
@@ -284,6 +285,9 @@ export const createSampleSettings = (): AppSettings => {
   importRecords: [],
   calibrationHistory: [],
   calibrationSettings: createDefaultCalibrationSettings(),
+  forecastSettings: createDefaultForecastSettings(),
+  demandForecasts: [],
+  forecastExclusions: [],
   })
 }
 

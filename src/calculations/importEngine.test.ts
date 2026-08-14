@@ -95,6 +95,10 @@ describe('Actual CSV aggregation', () => {
     expect(prepared.contribution.revenue).toBe(2_400)
     expect(prepared.contribution.meals).toBe(3)
     expect(prepared.contribution.menuSales[0]).toMatchObject({ menuItemId: menu.id, quantity: 3, revenue: 2_400 })
+    expect(prepared.contribution.dailyDemandRecords).toEqual([
+      { date: '2026-08-01', salesCount: 2, menuCounts: [{ menuItemId: menu.id, quantity: 2 }] },
+      { date: '2026-08-02', salesCount: 1, menuCounts: [{ menuItemId: menu.id, quantity: 1 }] },
+    ])
   })
 
   it('Salesの期間外行をWarning付きSkipにする', () => {

@@ -1,6 +1,6 @@
 # SobaOps
 
-SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 9では、Phase 8までのEngine群を維持したまま、汎用CSVからActualへ実績を取り込み、Variance、校正候補、Backtestを通してモデル精度を継続的に確認できる機能を追加しました。
+SobaOps は、蕎麦店の販売数、メニュー構成、原材料、仕込み、人件費、水道光熱、揚げ油、廃棄、営業時間、営業日数、在庫と購入支出をまとめて試算するブラウザ完結型のコスト・オペレーションシミュレーターです。Phase 10では、Phase 9までに蓄積したActualの日次履歴から需要Observationを作り、説明可能な6つの統計モデル、Rolling-origin Backtest、経験的予測幅を使って将来需要を推定し、Planning・Monte Carlo・Optimizationへ非破壊で接続します。
 
 単なる「1食原価」ではなく、固定費が販売量によってどう薄まるか、内製と既製品のどちらが有利か、営業時間や営業日数の変更が利益へどう影響するかを同じモデルから確認できます。初回起動時から、7種類の蕎麦メニューと原材料・仕込み工程を含むサンプル店舗が表示されます。
 
@@ -96,6 +96,15 @@ Viteの `base` はリポジトリPages用の `/soba-ops-simulator/` です。将
 - 日別損益、Inventory / Prep / Procurement Timeline、期間利益・廃棄・期末在庫の集計
 - `hash(baseSeed, runIndex, dayIndex)`を使う複数日Monte Carlo、p10期間利益・赤字期間率
 - 曜日別Staff、Prep / Procurement Lookaheadを含む複数日Optimizationと利益 / 廃棄・欠品Pareto軸
+- Actual日次履歴から実来店人数、明示需要、販売食数Fallbackを優先順に選ぶDemand Observation生成
+- stockout・席待ち離脱・Capacity未処理・早仕舞いを補正せず記録するcensored / limited demand
+- Naive、Moving Average、Weighted Moving Average、Weekday Average、Weekday Weighted Average、Weekday Trendの需要予測
+- Look-ahead Biasを避けるRolling-origin BacktestとMAE・RMSE・Bias・WAPE・MAPE・Interval Coverage
+- Backtest residualの経験分布による日別p10〜p90予測幅と、seed付きResidual bootstrapによる期間需要分布
+- 曜日別Menu Mix Forecastと、履歴不足時のBase Menu Mix / 単純Modelへの明示Fallback
+- 作成時点を固定するForecast Snapshot、予測履歴、後日Actualとの事後比較
+- 低需要・中心・高需要・bootstrap ForecastをBase非破壊のPlanning Scenarioへ保存
+- Forecast需要を日別Planning、Monte Carlo、Optimizationへ渡し、全候補の共通seed比較を維持
 - g / kg、ml / Lの自動換算と、不正な単位・参照・工程循環などのValidation
 - メニュー、Resource、Process、水道光熱、揚げ油まで追跡できる折りたたみ式の計算詳細
 - Inventory Lotを営業日・休業日を通して持ち越す日次状態遷移
@@ -122,6 +131,10 @@ Resource → Process → Output → Inventory → Consumption
 - `InventorySettings`: シミュレーション開始時の期首Lotを保持します。旧 `InventoryEntry` はJSON後方互換のため残していますが、新規計算はLotを使用します。
 - `Consumption`: メニュー、トッピング、次工程から、ResourceまたはOutputを数量付きで参照します。
 - `ActualPeriod`: 開始日・終了日と、任意入力の売上、食数、仕入、在庫、人件費、水道光熱、廃棄、Resource別実績を保持します。Simulation設定とは独立しており、自動補正には使用しません。
+- `DemandObservation`: Actualの日次実来店人数、明示需要、販売食数をForecast用に正規化します。source、quality、censored理由、学習除外を保持し、Actual自体は変更しません。
+- `ForecastSettings`: Method、Training Window、windowSize、最低履歴数、censored / limited採否、モデル選択指標、Residual Interval条件を保持します。
+- `DemandForecast`: 作成日時、Training期間、source Actual IDs、Forecast Point、Backtest Summaryを固定したSnapshotです。新しいActualを追加しても既存Snapshotは再計算しません。
+- `ForecastPoint`: 日付、中心予測、経験的lower / upper、実際に使用したMethod / Fallback、履歴数、曜日別Menu Mixを保持します。
 - `ImportDataset`: CSVの列名・行・行Hash、sourceType、Preview用情報を保持する一時モデルです。CSV原文や全行はlocalStorageへ保存しません。
 - `ImportMappingProfile`: sourceTypeごとのCSV header名からSobaOps項目への対応と、外部名からMenuItem / Resource / LaborRole IDへの対応を保持します。列順には依存しません。
 - `ImportRecord`: ActualPeriodへ反映した行数・対象項目・dataset / row Hash・Import前後Snapshotを保持し、重複候補検出と安全なUndoに使います。
@@ -143,7 +156,7 @@ Resource → Process → Output → Inventory → Consumption
 - `OptimizationConstraint`: 評価指標、`<= / >=`、基準値を持ちます。各候補は`feasible`と具体的な違反量を保持します。
 - `DailyOperatingPlan`: Base / 曜日Templateに対する特定日の営業、需要、Staff、Manual Prep差分です。
 - `PurchaseOrder`: Resource、発注日、入荷日、package数、数量、支出、状態を持ち、未入荷のまま翌日へ引き継げます。
-- `PlanningSettings`: Horizon、曜日Template、日付Override、Manual Purchase Order、複数日Monte Carlo条件をまとめます。
+- `PlanningSettings`: Horizon、曜日Template、日付Override、Manual Purchase Order、複数日Monte Carlo条件と`Base / Manual / Forecast Snapshot`のDemand Sourceをまとめます。
 - `MultiDaySimulationResult`: 日別結果、期間集計、期末Lot、Pending Order、Inventory / Prep / Procurement Timeline、stockoutを保持します。
 
 たとえば店舗用かえしは「内製かえし 2 L + 既製かえし 1 L → 店舗用かえし 3 L」という通常のProcessです。画面上でInput数量を変えれば、特殊なかえし専用ロジックを使わず混合比率が変わります。
@@ -341,6 +354,51 @@ Calibration Candidateは選択したActualPeriodから次を提示します。
 
 BacktestはActualPeriodが複数日ならPhase 8のMulti-day Engineで実日付範囲を連続再計算します。表示される予測は「当時保存した予測」ではなく、**現在のモデルで過去期間を再計算した値**です。差異は`予測 - 実績`、MAEは入力済み値だけの平均絶対誤差、MAPEは入力済みかつActualが0でない値だけの平均絶対誤差率です。小さいActualでMAPEが極端になるためMAEを常に併記します。同じ期間で校正と評価を行った誤差改善は将来精度を保証せず、過学習の可能性があります。
 
+### Phase 10 履歴需要予測
+
+Forecast Engineは[src/calculations/forecastEngine.ts](src/calculations/forecastEngine.ts)へ分離し、Economic・Inventory・Capacity Engine内に予測式を持ち込みません。Actualの日次データから次の優先順でDemand Observationを作ります。
+
+```text
+実来店人数 guestCount
+  ↓ 未入力なら
+明示需要 demandCount
+  ↓ 未入力なら
+販売食数 salesCount（需要近似）
+```
+
+売上CSVはActual集計に加えて日付別販売食数・Menu別食数を保持します。複数日Actualの総販売食数を日割りして履歴にはしません。stockout、席待ち離脱、Capacity未処理が記録された販売数は`censored`、早仕舞い・短時間営業は`limited`です。参考として「販売数 + 明示された失注」の下限相当を表示しますが、Observation値を勝手に補正しません。休業日は需要0として学習せず、臨時休業・イベント・設備故障・天候・その他の特殊日はActualを削除せずForecast学習だけから除外できます。
+
+実装するMethodは次の6種類です。
+
+- Naive: 直近の有効Observation
+- Moving Average: 直近N営業日の単純平均
+- Weighted Moving Average: 古い順に`1, 2, ... N`の線形weightを付けた平均
+- Weekday Average: 対象と同じ曜日の直近N件の単純平均
+- Weekday Weighted Average: 同曜日内で新しいObservationほど大きい線形weight
+- Weekday Trend: 同曜日のLevelへ、週単位の最小二乗直線Trendを加えた外挿
+
+履歴不足時は`weekdayTrend → weekdayAverage → movingAverage → naive`など、より単純なMethodへFallbackし、実際のFallbackを日別結果に表示します。Training Windowは全履歴、直近4 / 8 / 12週、カスタムから選択できます。年次季節性は推定しません。
+
+Forecast BacktestはRolling-origin方式です。対象日より前のObservationだけで各日を予測するため、未来Actualを学習へ混ぜるLook-ahead Biasを防ぎます。指標定義は次のとおりです。
+
+```text
+MAE  = mean(abs(forecast - actual))
+RMSE = sqrt(mean((forecast - actual)^2))
+Bias = mean(forecast - actual)  # 正は過大、負は過小
+WAPE = sum(abs(forecast - actual)) / sum(actual)
+MAPE = mean(abs(error) / actual) # actual = 0は除外
+```
+
+「有力Model」はユーザーが選んだMAE / RMSE / WAPEがBacktest上で最小のものです。未来を保証する「正解Model」ではありません。Forecast Errorは来客需要量の誤差、Phase 9のSimulation Errorはその需要を与えた費用・利益再現の誤差であり、別の指標です。
+
+予測幅はRolling BacktestのResidual `actual - forecast` の経験分布からp10 / p90を取り、Point Forecastへ加算します。lowerは0でclipします。Residualが設定数に満たない場合は算出不可とし、根拠のない±20%を補いません。この幅は過去誤差から作る経験的範囲であり、厳密な80%信頼区間ではありません。BacktestでActualが幅内に入った割合をInterval Coverageとして併記します。
+
+Forecast Snapshotは作成日時、Training期間、source ActualPeriod ID、設定、日別Point / lower / upper、Backtest Summaryを固定保存します。後からActualをImportしても既存Snapshotを書き換えず、再予測は新しいSnapshotとして保存します。Backtestは現在のMethodを過去へRolling評価した結果、Snapshot事後比較は当時保存したForecastと後日Actualの比較です。
+
+Menu Mixは曜日別または直近履歴のMenu別販売構成を合計し100%へ正規化します。履歴不足時はBase Menu MixへFallbackします。需要Forecastから売上を直接予測せず、現行価格・Menu Mix・既存Economic Engineが売上と利益を計算します。
+
+Planningへは低需要、中心、高需要、Residual bootstrapのScenarioまたは明示的なDemand Sourceとして渡します。Base DemandProfileは自動変更しません。Forecast uncertaintyはResidualをseed付きで復元抽出して日全体の需要水準を揺らし、その後に既存Poisson arrival・Party生成が同じ需要水準内の来店時刻を揺らします。`Math.random`は使用せず、同じSnapshot・Plan・baseSeedは再現されます。Optimizationでも全Candidateが同じForecast Snapshotとseed集合を使うCommon Random Numbersを維持します。
+
 ### Sensitivityと損益分岐
 
 Sensitivityは1日販売食数、平均販売価格、時給、選択Resource購入価格、水道・ガス・電気単価、営業時間、週営業日数を対象に、`-20% / -10% / 基準 / +10% / +20%` の設定コピーを作り、既存Simulation Engineへ渡します。売上、使用原価、人件費、営業利益、利益率、簡易現金収支と営業利益グラフを表示します。独自の近似式は使用しません。
@@ -478,6 +536,10 @@ Inventory消費は引き続き分単位同期ではなく日次集計です。�
 19. Phase 9のCSVは必ずActualへの入口にし、Resource・Menu・BusinessSettings・Processを直接書き換えません。未入力と明示0、購入と使用を分離します。
 20. 校正は総額 / 総量の加重平均を候補として提示するだけです。Base変更は1項目ずつの明示操作、非破壊検証はScenarioを使います。
 21. Backtestは現在モデルを過去日付へ再実行します。MAE / MAPEは入力済み項目だけを対象とし、MAPEではActual 0を除外します。
+22. ForecastはActualでも確定需要でもありません。実来店人数がなければ販売数を需要近似にできますが、欠品・離脱・Capacity制約があればcensoredとして扱い、販売数を潜在需要へ自動補正しません。
+23. Forecast Rolling Backtestは対象日より前のObservationだけを使います。Forecast Intervalも各Backtest時点より前に得たResidualだけでCoverageを評価し、未来Residualを混ぜません。
+24. Forecast Snapshotはimmutableな予測記録です。Planningへの接続は日別Override / Demand SourceまたはScenarioとして明示操作し、Base DemandProfileを自動更新しません。
+25. Forecast uncertainty（総需要水準）とArrival randomness（来店時刻・Party）は別段階でsamplingし、Monte Carlo / Optimizationは共通seed集合を使います。
 
 ### Validationと計算詳細
 
@@ -486,6 +548,8 @@ DashboardはErrorとWarningを分けて表示します。Errorは存在しない
 Phase 8ではさらに、負のLead Time / Prep・Procurement Lookahead、0以下のHorizon、366日超、入荷日が発注日より前の注文、不存在Resource注文、不正なDaily OverrideをErrorにします。Lead TimeがLookaheadを超える、Prep Lookaheadが保存期限以上、Horizon後入荷、30日Monte Carlo / OptimizationはWarningです。
 
 Phase 9ではCSV parse失敗、必須Column未Mapping、不正日付・数量・金額、未解決Entity、不正単位、存在しないActualPeriod、50,000行超をImport Errorにします。期間外行、未Mapping Entity、重複候補、光熱請求期間の部分重複、少ない校正期間、大きなVariance、外れ値候補はWarningです。Error行があっても正常行は分離して確認できます。
+
+Phase 10では0以下のHorizon / Window / 最低Observation、不正Method・Training期間・Interval percentile、重複Future date、不正Observation値、破損Snapshot、不存在Forecast参照をErrorにします。履歴・曜日履歴・Residual不足、販売数Fallback、censored利用、外れ値候補、大きいBias、履歴に対して長いHorizonをWarningにします。外れ値やcensored Observationは自動削除しません。
 
 「計算詳細・検算内訳」では、従来のメニュー、Process、水道光熱に加え、Resource / Output別の期首、購入、内製、副産物、使用、廃棄、期末、使用原価、購入支出を確認できます。在庫・仕入画面では仕入履歴、廃棄理由、日次在庫推移、期末Lotを追跡できます。運営計画画面では日別損益、Inventory / Prep / Procurement Timeline、Pending Order、stockoutを追跡できます。
 
@@ -504,8 +568,8 @@ Party人数（1人40%、2人40%、3人10%、4人8%、5人2%）、カウンター
 ## 保存とJSON
 
 - localStorage key: `sobaops.settings.v1`
-- current schema: `schemaVersion: 9`
-- v1〜v8のlocalStorageとExport JSONは読み込み時にv9へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では標準Workflow、Equipment、StaffShift、DemandProfileを補います。v5 → v6では既存Capacity設定を保持したままdeterministicを既定にし、stochastic需要、Party、客席、Monte Carlo設定を追加します。v6 → v7では`optimizationStudies: []`、v7 → v8では`planning`、7日Horizon、曜日Template、空のDaily Override / Purchase Order、Lead Time・Lookahead既定値を補います。v8 → v9では既存Actualを維持し、`importMappingProfiles: []`、`importRecords: []`、`calibrationHistory: []`、`calibrationSettings`の安全な既定値を追加します。
+- current schema: `schemaVersion: 10`
+- v1〜v9のlocalStorageとExport JSONは読み込み時にv10へ順次自動移行します。v1工程には従来人件費を維持する `laborCostTreatment: 'additionalLabor'` を補います。v2 → v3では `openingLots: []`、在庫持越し有効、最低購入package数1を安全な初期値とし、旧carryOver在庫があれば期首Lotへ変換します。v3 → v4では `actualPeriods: []` と `scenarios: []` を追加します。v4 → v5では標準Workflow、Equipment、StaffShift、DemandProfileを補います。v5 → v6では既存Capacity設定を保持したままdeterministicを既定にし、stochastic需要、Party、客席、Monte Carlo設定を追加します。v6 → v7では`optimizationStudies: []`、v7 → v8では`planning`、7日Horizon、曜日Template、空のDaily Override / Purchase Order、Lead Time・Lookahead既定値を補います。v8 → v9では既存Actualを維持し、Import / Calibrationの安全な既定値を追加します。v9 → v10では既存Actualへ空の日次需要系列、Planningへ`demandSource: base`、`forecastSettings`、空の`demandForecasts / forecastExclusions`を補います。
 - 新規サンプルの仕込み工程は実態に合わせて `withinScheduledShift` です。そのためサンプルへリセットすると、v1サンプルのような仕込み人件費の二重加算は行いません。
 - localStorage keyは既存データを発見するため意図的に `sobaops.settings.v1` のままです。保存されるJSONのschemaVersionとは別です。
 - Import時に最低限の構造とschemaVersionを検証し、計算設定の詳細は画面上のValidationで確認できます。
@@ -515,7 +579,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 
 ## テスト
 
-[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/multiDayEngine.test.ts](src/calculations/multiDayEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/optimizationEngine.test.ts](src/calculations/optimizationEngine.test.ts)、[src/calculations/importEngine.test.ts](src/calculations/importEngine.test.ts)、[src/calculations/calibrationEngine.test.ts](src/calculations/calibrationEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) の295件で次を検証しています。
+[src/calculations/engine.test.ts](src/calculations/engine.test.ts)、[src/calculations/inventoryEngine.test.ts](src/calculations/inventoryEngine.test.ts)、[src/calculations/multiDayEngine.test.ts](src/calculations/multiDayEngine.test.ts)、[src/calculations/decisionSupport.test.ts](src/calculations/decisionSupport.test.ts)、[src/calculations/capacityEngine.test.ts](src/calculations/capacityEngine.test.ts)、[src/calculations/demandEngine.test.ts](src/calculations/demandEngine.test.ts)、[src/calculations/forecastEngine.test.ts](src/calculations/forecastEngine.test.ts)、[src/calculations/monteCarloEngine.test.ts](src/calculations/monteCarloEngine.test.ts)、[src/calculations/optimizationEngine.test.ts](src/calculations/optimizationEngine.test.ts)、[src/calculations/importEngine.test.ts](src/calculations/importEngine.test.ts)、[src/calculations/calibrationEngine.test.ts](src/calculations/calibrationEngine.test.ts)、[src/calculations/calendar.test.ts](src/calculations/calendar.test.ts)、[src/validation/settingsValidation.test.ts](src/validation/settingsValidation.test.ts)、[src/storage/settingsStorage.test.ts](src/storage/settingsStorage.test.ts) の348件で次を検証しています。
 
 - 歩留まりと実質単価
 - 1食分の原材料費
@@ -529,7 +593,7 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 不存在Source、Process循環のValidation
 - schemaVersion v1 → v2移行
 - schemaVersion v2 → v3移行
-- schemaVersion v3 → v4、v4 → v5、v5 → v6、v6 → v7、v7 → v8、v8 → v9、およびv1 → v9連続移行
+- schemaVersion v3 → v4、v4 → v5、v5 → v6、v6 → v7、v7 → v8、v8 → v9、v9 → v10、およびv1 → v10連続移行
 - 揚げ油交換周期
 - 内製 vs 既製品比較とROI
 - FIFO、複数取得価格Lot、購入package、最低購入数
@@ -576,13 +640,19 @@ Phase 3では購入package、保存期限、Outputバッチ余剰を実計算す
 - 光熱・Resource・Role単価の複数期間加重平均、対象期間選択、信頼度、外れ値Warning
 - 校正候補の自動非適用、Scenario保存、明示Base適用、履歴、Revert
 - 単一・複数日Backtest、MAE / MAPE、Actual 0のMAPE除外、Base / 校正Scenario比較
-- schemaVersion v8 → v9、およびv1 → v9連続migration
+- Demand Observationのsource優先、販売数Fallback、censored / limited、学習除外と非補正
+- Naive、移動平均、加重移動平均、曜日平均、曜日加重平均、曜日Trendと履歴不足Fallback
+- Look-ahead BiasなしのRolling-origin、MAE・RMSE・Bias・WAPE・MAPE、Actual 0除外
+- Residual percentile、0 clip、履歴不足、Interval Coverageと未来Residual非使用
+- Forecast Snapshot不変性、事後Actual比較、曜日別Menu Mix正規化とBase fallback
+- ForecastからPlanning / Monte Carlo / Multi-day / Optimizationへの接続、Residual bootstrapと共通seed再現性
+- schemaVersion v8 → v9、v9 → v10、およびv1 → v10連続migration
 
 ## ディレクトリ構成
 
 ```text
 src/
-  calculations/   # UI非依存の損益・在庫・計画・Capacity・Demand・Monte Carlo・Optimization・Import・Calibration Engineとテスト
+  calculations/   # UI非依存の損益・在庫・計画・Capacity・Demand・Forecast・Monte Carlo・Optimization・Import・Calibration Engineとテスト
   components/     # Dashboard、編集画面、グラフ、UI部品
   data/           # 初回サンプル店舗
   models/         # 中心データ型
@@ -608,6 +678,7 @@ src/
 - Shift-JIS CSV、POS / 会計 / 請求書API、OCR、Google Sheets同期、月跨ぎCSVの自動ActualPeriod分割
 - AI列Mapping・名称照合、詳細POS時刻ログによる厨房・席・滞在パラメータ校正
 - Holdout期間の専用UI、過去予測Snapshot、統計的外れ値除外、機械学習Calibration
-- Actualを利用するPhase 10の需要予測（Phase 9は販売実績から潜在需要を自動推定しません）
+- 天気・祝日・地域イベントなど外部要因を使うPhase 11需要予測（Phase 10はブラウザ内Actualと曜日だけを使用）
+- ARIMA / SARIMA / Prophet / 機械学習、年次季節性、価格弾力性、自動特徴量選択
 - 任意の感度変化率、複数パラメータ同時感度、メニュー構成・内製比率感度
 - 価格弾力性、天候・曜日・季節需要、税・減価償却、クラウド同期

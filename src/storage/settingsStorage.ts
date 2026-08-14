@@ -4,10 +4,11 @@ import { createDefaultStochasticDemand } from '../data/demandDefaults'
 import { todayLocalDate } from '../calculations/calendar'
 import { createDefaultPlanningSettings } from '../data/planningDefaults'
 import { createDefaultCalibrationSettings } from '../data/calibrationDefaults'
+import { createDefaultForecastSettings } from '../data/forecastDefaults'
 import type { AppSettings, OpeningInventoryLot, Process } from '../models/types'
 
 export const STORAGE_KEY = 'sobaops.settings.v1'
-export const CURRENT_SCHEMA_VERSION = 9
+export const CURRENT_SCHEMA_VERSION = 10
 
 const isSettingsShape = (value: unknown): value is AppSettings => {
   if (!value || typeof value !== 'object') return false
@@ -25,6 +26,7 @@ const isSettingsShape = (value: unknown): value is AppSettings => {
     && (candidate.schemaVersion < 7 || Array.isArray(candidate.optimizationStudies))
     && (candidate.schemaVersion < 8 || !!candidate.planning)
     && (candidate.schemaVersion < 9 || (Array.isArray(candidate.importMappingProfiles) && Array.isArray(candidate.importRecords) && Array.isArray(candidate.calibrationHistory) && !!candidate.calibrationSettings))
+    && (candidate.schemaVersion < 10 || (!!candidate.forecastSettings && Array.isArray(candidate.demandForecasts) && Array.isArray(candidate.forecastExclusions) && !!candidate.planning?.demandSource))
 }
 
 export const migrateV1ToV2 = (settings: AppSettings): AppSettings => ({
@@ -143,6 +145,27 @@ export const migrateV8ToV9 = (settings: AppSettings): AppSettings => ({
   calibrationSettings: settings.calibrationSettings ?? createDefaultCalibrationSettings(),
 })
 
+export const migrateV9ToV10 = (settings: AppSettings): AppSettings => ({
+  ...settings,
+  schemaVersion: 10,
+  actualPeriods: settings.actualPeriods.map((period) => ({
+    ...period,
+    actuals: { ...period.actuals, dailyDemandRecords: period.actuals.dailyDemandRecords ?? [] },
+  })),
+  planning: {
+    ...settings.planning,
+    demandSource: settings.planning.demandSource ?? { type: 'base' },
+  },
+  optimizationStudies: settings.optimizationStudies.map((study) => ({
+    ...study,
+    forecastDemandCase: study.forecastDemandCase ?? 'point',
+    sampleForecastUncertainty: study.sampleForecastUncertainty ?? false,
+  })),
+  forecastSettings: settings.forecastSettings ?? createDefaultForecastSettings(),
+  demandForecasts: settings.demandForecasts ?? [],
+  forecastExclusions: settings.forecastExclusions ?? [],
+})
+
 export const migrateSettings = (settings: AppSettings): AppSettings => {
   let migrated = settings
   if (migrated.schemaVersion === 1) migrated = migrateV1ToV2(migrated)
@@ -153,6 +176,7 @@ export const migrateSettings = (settings: AppSettings): AppSettings => {
   if (migrated.schemaVersion === 6) migrated = migrateV6ToV7(migrated)
   if (migrated.schemaVersion === 7) migrated = migrateV7ToV8(migrated)
   if (migrated.schemaVersion === 8) migrated = migrateV8ToV9(migrated)
+  if (migrated.schemaVersion === 9) migrated = migrateV9ToV10(migrated)
   return migrated
 }
 
