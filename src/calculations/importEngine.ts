@@ -2,6 +2,7 @@ import { formatLocalDate, parseLocalDate } from './calendar'
 import { tryConvertQuantity } from './units'
 import type {
   ActualInventoryRecord,
+  ActualDailyDemandRecord,
   ActualLaborRecord,
   ActualMenuSales,
   ActualPeriod,
@@ -206,6 +207,7 @@ const emptyActuals = (): ActualValues => ({
   wasteRecords: [],
   inventoryRecords: [],
   utilities: { water: {}, gas: {}, electricity: {} },
+  dailyDemandRecords: [],
 })
 
 const addOptional = (current: number | undefined, amount: number) => (current ?? 0) + amount
@@ -252,6 +254,49 @@ const upsertMenu = (items: ActualMenuSales[], incoming: ActualMenuSales) => {
     current.quantity += incoming.quantity
     if (incoming.revenue !== undefined) current.revenue = addOptional(current.revenue, incoming.revenue)
   }
+}
+
+const upsertDailySales = (
+  records: ActualDailyDemandRecord[],
+  date: string,
+  menuItemId: string,
+  quantity: number,
+) => {
+  let record = records.find((item) => item.date === date)
+  if (!record) {
+    record = { date, salesCount: 0, menuCounts: [] }
+    records.push(record)
+  }
+  record.salesCount = addOptional(record.salesCount, quantity)
+  const menuCounts = record.menuCounts ?? (record.menuCounts = [])
+  upsertMenu(menuCounts, { menuItemId, quantity })
+}
+
+const mergeDailyDemandRecords = (
+  current: ActualDailyDemandRecord[],
+  incoming: ActualDailyDemandRecord[],
+) => {
+  const result = current.map((record) => structuredClone(record))
+  for (const record of incoming) {
+    const existing = result.find((item) => item.date === record.date)
+    if (!existing) {
+      result.push(structuredClone(record))
+      continue
+    }
+    if (record.salesCount !== undefined) existing.salesCount = addOptional(existing.salesCount, record.salesCount)
+    if (record.guestCount !== undefined) existing.guestCount = addOptional(existing.guestCount, record.guestCount)
+    if (record.demandCount !== undefined) existing.demandCount = addOptional(existing.demandCount, record.demandCount)
+    if (record.stockoutLostMeals !== undefined) existing.stockoutLostMeals = addOptional(existing.stockoutLostMeals, record.stockoutLostMeals)
+    if (record.abandonmentGuests !== undefined) existing.abandonmentGuests = addOptional(existing.abandonmentGuests, record.abandonmentGuests)
+    if (record.capacityUnservedMeals !== undefined) existing.capacityUnservedMeals = addOptional(existing.capacityUnservedMeals, record.capacityUnservedMeals)
+    if (record.operatingHours !== undefined) existing.operatingHours = record.operatingHours
+    if (record.expectedOperatingHours !== undefined) existing.expectedOperatingHours = record.expectedOperatingHours
+    if (record.earlyClosing !== undefined) existing.earlyClosing = record.earlyClosing
+    if (record.closed !== undefined) existing.closed = record.closed
+    const menuCounts = existing.menuCounts ?? (existing.menuCounts = [])
+    record.menuCounts?.forEach((item) => upsertMenu(menuCounts, item))
+  }
+  return result.sort((left, right) => left.date.localeCompare(right.date))
 }
 
 const upsertResource = (items: ActualResourceRecord[], resourceId: string, unit: Unit, patch: Partial<ActualResourceRecord>) => {
@@ -351,6 +396,7 @@ export const prepareImport = (
       contribution.revenue = addOptional(contribution.revenue, amount as number)
       contribution.meals = addOptional(contribution.meals, quantity as number)
       upsertMenu(contribution.menuSales, { menuItemId: entityId!, quantity: quantity as number, revenue: amount as number })
+      upsertDailySales(contribution.dailyDemandRecords!, date!, entityId!, quantity as number)
     } else if (dataset.sourceType === 'purchases') {
       const date = parseDateField('date')
       const quantity = parseNumberField('quantity')
@@ -456,7 +502,7 @@ export const prepareImport = (
     validRowIndexes.push(index)
   })
 
-  const targetFields = dataset.sourceType === 'sales' ? ['revenue', 'meals', 'menuSales']
+  const targetFields = dataset.sourceType === 'sales' ? ['revenue', 'meals', 'menuSales', 'dailyDemandRecords']
     : dataset.sourceType === 'purchases' ? ['purchaseExpenditure', 'resourceRecords.purchase']
       : dataset.sourceType === 'utilities' ? ['utilities']
         : dataset.sourceType === 'labor' ? ['laborCost', 'laborHours', 'laborRecords']
@@ -470,6 +516,16 @@ const resetSource = (actuals: ActualValues, sourceType: ImportSourceType): Actua
   const next: ActualValues = structuredClone(actuals)
   if (sourceType === 'sales') {
     delete next.revenue; delete next.meals; next.menuSales = []
+    next.dailyDemandRecords = (next.dailyDemandRecords ?? []).flatMap((record) => {
+      const cleaned = { ...record }
+      delete cleaned.salesCount
+      delete cleaned.menuCounts
+      const hasObservation = cleaned.guestCount !== undefined || cleaned.demandCount !== undefined
+        || cleaned.stockoutLostMeals !== undefined || cleaned.abandonmentGuests !== undefined
+        || cleaned.capacityUnservedMeals !== undefined || cleaned.operatingHours !== undefined
+        || cleaned.expectedOperatingHours !== undefined || cleaned.earlyClosing !== undefined || cleaned.closed !== undefined
+      return hasObservation ? [cleaned] : []
+    })
   } else if (sourceType === 'purchases') {
     delete next.purchaseExpenditure
     next.resourceRecords = next.resourceRecords.map((record) => {
@@ -514,6 +570,7 @@ export const mergeActualContribution = (current: ActualValues, contribution: Act
   contribution.laborRecords?.forEach((record) => upsertLabor(next.laborRecords!, record.laborRoleId, record.hours ?? 0, record.cost ?? 0))
   next.wasteRecords = [...(next.wasteRecords ?? []), ...(contribution.wasteRecords ?? []).map((record) => ({ ...record }))]
   next.inventoryRecords = [...(next.inventoryRecords ?? []), ...(contribution.inventoryRecords ?? []).map((record) => ({ ...record }))]
+  next.dailyDemandRecords = mergeDailyDemandRecords(next.dailyDemandRecords ?? [], contribution.dailyDemandRecords ?? [])
   return next
 }
 

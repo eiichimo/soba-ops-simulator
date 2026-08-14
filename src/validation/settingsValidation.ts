@@ -1,11 +1,13 @@
 import { getScheduleForDate, parseLocalDate, scheduleHours, timeToMinutes } from '../calculations/calendar'
 import { calculateOptimizationCandidateCount, expandOptimizationVariableValues, OPTIMIZATION_WARNING_CANDIDATES } from '../calculations/optimizationEngine'
 import { areUnitsCompatible } from '../calculations/units'
+import { buildDemandObservations, buildForecastWarnings } from '../calculations/forecastEngine'
 import type { AppSettings, SourceRef, ValidationIssue } from '../models/types'
 
 const optimizationVariableTypes = new Set(['staffShiftHeadcount', 'equipmentCapacity', 'seatingUnitCount', 'openingTime', 'closingTime', 'kitchenOperationDuration', 'weekdayStaffHeadcount', 'weekdayOpeningTime', 'weekdayClosingTime', 'processPrepLookaheadDays', 'resourceProcurementLookaheadDays'])
 const optimizationObjectives = new Set(['maximizeMeanOperatingProfit', 'maximizeP10OperatingProfit', 'minimizeAverageWait', 'minimizeLaborCost', 'maximizeRealizedSales', 'maximizeMeanPeriodProfit', 'maximizeP10PeriodProfit', 'minimizePeriodWaste', 'minimizeStockoutLoss'])
 const optimizationConstraintMetrics = new Set(['laborCost', 'meanOperatingProfit', 'p10OperatingProfit', 'averageKitchenWait', 'p90KitchenWait', 'abandonmentRate', 'realizedSales', 'serviceLevel', 'staffCount', 'totalSeats', 'afterClosingMinutes', 'periodWasteCost', 'stockoutLostRevenue', 'purchaseExpenditure', 'endingInventoryValue'])
+const forecastMethods = new Set(['naive', 'movingAverage', 'weightedMovingAverage', 'weekdayAverage', 'weekdayWeightedAverage', 'weekdayTrend'])
 
 const issue = (
   severity: ValidationIssue['severity'],
@@ -297,6 +299,8 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
       ['ガス料金', actualPeriod.actuals.utilities.gas.cost], ['ガス使用量', actualPeriod.actuals.utilities.gas.quantity],
       ['電気料金', actualPeriod.actuals.utilities.electricity.cost], ['電力使用量', actualPeriod.actuals.utilities.electricity.quantity],
       ['その他費用', actualPeriod.actuals.otherCost], ['営業日数', actualPeriod.actuals.operatingDays], ['総営業時間', actualPeriod.actuals.operatingHours],
+      ['実来店人数', actualPeriod.actuals.guestCount], ['明示需要', actualPeriod.actuals.demandCount], ['欠品失注', actualPeriod.actuals.stockoutLostMeals],
+      ['席待ち離脱', actualPeriod.actuals.abandonmentGuests], ['厨房未処理', actualPeriod.actuals.capacityUnservedMeals],
     ]
     for (const [label, value] of nonNegativeValues) {
       if (value !== undefined && value < 0) issues.push(issue('error', 'negative-actual-value', `${actualPeriod.name}の${label}は0以上にしてください。`, path))
@@ -344,6 +348,56 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     issues.push(issue('error', 'duplicate-actual-id', '実績期間のIDが重複しています。', 'actualPeriods'))
   }
 
+  for (const [periodIndex, period] of settings.actualPeriods.entries()) {
+    const seenDates = new Set<string>()
+    for (const [recordIndex, record] of (period.actuals.dailyDemandRecords ?? []).entries()) {
+      const path = `actualPeriods.${periodIndex}.actuals.dailyDemandRecords.${recordIndex}`
+      const values = [record.guestCount, record.demandCount, record.salesCount, record.stockoutLostMeals, record.abandonmentGuests, record.capacityUnservedMeals]
+      if (!parseLocalDate(record.date) || values.some((value) => value !== undefined && (!Number.isFinite(value) || value < 0))) {
+        issues.push(issue('error', 'invalid-demand-observation', `${period.name}の日次需要実績が正しくありません。`, path))
+      }
+      if (seenDates.has(record.date)) issues.push(issue('error', 'duplicate-demand-observation-date', `${period.name}内で日次需要日付${record.date}が重複しています。`, path))
+      seenDates.add(record.date)
+      for (const menuCount of record.menuCounts ?? []) {
+        if (!settings.menuItems.some((menu) => menu.id === menuCount.menuItemId) || menuCount.quantity < 0) issues.push(issue('error', 'invalid-demand-menu-count', `${period.name}の日次Menu実績が正しくありません。`, path))
+      }
+    }
+  }
+
+  const forecast = settings.forecastSettings
+  if (!forecastMethods.has(forecast.method)) issues.push(issue('error', 'invalid-forecast-method', 'Forecast Methodが正しくありません。', 'forecastSettings.method'))
+  if (!Number.isInteger(forecast.horizonDays) || forecast.horizonDays <= 0) issues.push(issue('error', 'invalid-forecast-horizon', 'Forecast Horizonは1日以上にしてください。', 'forecastSettings.horizonDays'))
+  if (!Number.isInteger(forecast.windowSize) || forecast.windowSize <= 0) issues.push(issue('error', 'invalid-forecast-window', 'Forecast Windowは1営業日以上にしてください。', 'forecastSettings.windowSize'))
+  if (!Number.isInteger(forecast.minimumObservations) || forecast.minimumObservations <= 0) issues.push(issue('error', 'invalid-forecast-minimum-observations', '最低Observation数は1以上にしてください。', 'forecastSettings.minimumObservations'))
+  if (!Number.isInteger(forecast.minimumIntervalResiduals) || forecast.minimumIntervalResiduals <= 0 || !Number.isInteger(forecast.bootstrapRuns) || forecast.bootstrapRuns <= 0) issues.push(issue('error', 'invalid-forecast-sampling-settings', 'Interval最低Residual数とbootstrap run数は1以上にしてください。', 'forecastSettings'))
+  if (forecast.trainingWindow === 'custom' && (!forecast.trainingStart || !forecast.trainingEnd || !parseLocalDate(forecast.trainingStart) || !parseLocalDate(forecast.trainingEnd) || forecast.trainingEnd < forecast.trainingStart)) {
+    issues.push(issue('error', 'invalid-forecast-training-range', 'Forecast Training期間が正しくありません。', 'forecastSettings'))
+  }
+  if (forecast.intervalLowerPercentile < 0 || forecast.intervalUpperPercentile > 1 || forecast.intervalLowerPercentile >= forecast.intervalUpperPercentile) {
+    issues.push(issue('error', 'invalid-forecast-interval-percentiles', 'Forecast Intervalのpercentileを0〜1の昇順で設定してください。', 'forecastSettings'))
+  }
+
+  for (const [index, snapshot] of settings.demandForecasts.entries()) {
+    const path = `demandForecasts.${index}`
+    if (!snapshot.id || !snapshot.name.trim() || !forecastMethods.has(snapshot.method) || !parseLocalDate(snapshot.trainingStart) || !parseLocalDate(snapshot.trainingEnd) || !parseLocalDate(snapshot.targetStart) || !parseLocalDate(snapshot.targetEnd)) {
+      issues.push(issue('error', 'invalid-forecast-snapshot', 'Forecast Snapshotの基本情報が破損しています。', path))
+    }
+    const dates = snapshot.forecastPoints.map((point) => point.date)
+    if (new Set(dates).size !== dates.length) issues.push(issue('error', 'duplicate-forecast-date', `${snapshot.name}に重複する将来日があります。`, path))
+    if (snapshot.forecastPoints.some((point) => !parseLocalDate(point.date) || !Number.isFinite(point.pointForecast) || point.pointForecast < 0 || (point.lower ?? 0) < 0 || (point.upper ?? 0) < 0 || (point.lower !== undefined && point.upper !== undefined && point.lower > point.upper))) {
+      issues.push(issue('error', 'invalid-forecast-point', `${snapshot.name}に不正なForecast Pointがあります。`, path))
+    }
+  }
+  if (new Set(settings.demandForecasts.map((item) => item.id)).size !== settings.demandForecasts.length) issues.push(issue('error', 'duplicate-forecast-id', 'Forecast Snapshot IDが重複しています。', 'demandForecasts'))
+  const forecastIds = new Set(settings.demandForecasts.map((item) => item.id))
+  if (settings.planning.demandSource.type === 'forecastSnapshot' && !forecastIds.has(settings.planning.demandSource.forecastId ?? '')) {
+    issues.push(issue('error', 'missing-planning-forecast', 'Planningが参照するForecast Snapshotが見つかりません。', 'planning.demandSource'))
+  }
+  settings.forecastExclusions.forEach((exclusion, index) => {
+    if (!parseLocalDate(exclusion.date)) issues.push(issue('error', 'invalid-forecast-exclusion', 'Forecast除外日が正しくありません。', `forecastExclusions.${index}`))
+  })
+  buildForecastWarnings(settings, buildDemandObservations(settings)).forEach((warning) => issues.push(issue('warning', warning.code, warning.message, 'forecastSettings')))
+
   const importSourceTypes = new Set(['sales', 'purchases', 'utilities', 'labor', 'waste', 'inventory', 'generic'])
   for (const [index, profile] of settings.importMappingProfiles.entries()) {
     const path = `importMappingProfiles.${index}`
@@ -388,6 +442,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if ((scenario.overrides.business?.mealsPerDay ?? 0) < 0 || (scenario.overrides.business?.hoursPerDay ?? 0) < 0) {
       issues.push(issue('error', 'negative-scenario-business-value', `${scenario.name}の食数・営業時間は0以上にしてください。`, path))
     }
+    if (scenario.overrides.business?.simulationStartDate && !parseLocalDate(scenario.overrides.business.simulationStartDate)) issues.push(issue('error', 'invalid-scenario-start-date', `${scenario.name}の開始日が正しくありません。`, path))
     const days = scenario.overrides.business?.operatingDaysPerWeek
     if (days !== undefined && (days < 0 || days > 7)) issues.push(issue('error', 'invalid-scenario-operating-days', `${scenario.name}の週営業日数は0〜7日にしてください。`, path))
     if (scenario.overrides.kitchenOpeningTime !== undefined || scenario.overrides.kitchenClosingTime !== undefined) {
@@ -418,6 +473,12 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
       if (!stochastic.seatingUnits.some((unit) => unit.id === seatingUnitId)) issues.push(issue('error', 'missing-scenario-seating-unit', `${scenario.name}の客席「${seatingUnitId}」が見つかりません。`, path))
       if (count < 0) issues.push(issue('error', 'negative-scenario-seating-count', `${scenario.name}の客席数は0以上にしてください。`, path))
     }
+    if (Object.entries(scenario.overrides.planningDailyDemandOverrides ?? {}).some(([date, value]) => !parseLocalDate(date) || value < 0)) {
+      issues.push(issue('error', 'invalid-scenario-forecast-demand', `${scenario.name}の日別Forecast需要が正しくありません。`, path))
+    }
+    if (scenario.overrides.planningDemandSource?.type === 'forecastSnapshot' && !forecastIds.has(scenario.overrides.planningDemandSource.forecastId ?? '')) {
+      issues.push(issue('error', 'missing-scenario-forecast', `${scenario.name}が参照するForecast Snapshotが見つかりません。`, path))
+    }
   }
   if (settings.scenarios.length > 5) issues.push(issue('warning', 'too-many-scenarios', '比較表示は先頭5件のScenarioまでです。', 'scenarios'))
 
@@ -439,6 +500,7 @@ export const validateSettings = (settings: AppSettings): ValidationIssue[] => {
     if (study.evaluationMode === 'monteCarlo' && study.monteCarloRuns > 0 && study.monteCarloRuns < 30) {
       issues.push(issue('warning', 'low-optimization-runs', `${study.name}のMonte Carlo run数が少ないため、上位候補を追加検証してください。`, `${studyPath}.monteCarloRuns`))
     }
+    if (study.demandForecastId && !forecastIds.has(study.demandForecastId)) issues.push(issue('error', 'missing-optimization-forecast', `${study.name}が参照するForecast Snapshotが見つかりません。`, studyPath))
 
     for (const [variableIndex, variable] of study.variables.entries()) {
       const variablePath = `${studyPath}.variables.${variableIndex}`

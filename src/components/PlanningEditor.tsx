@@ -100,7 +100,10 @@ export const PlanningEditor = ({ settings, onChange }: Props) => {
         <NumberField label="Base seed" value={planning.baseSeed} onChange={(event) => updatePlanning({ baseSeed: numeric(event.target.value) })}/>
         <NumberField label="目標期間利益" suffix="円" value={planning.targetProfit} onChange={(event) => updatePlanning({ targetProfit: numeric(event.target.value) })}/>
         <NumberField label="仕込みactive上限" suffix="分/日" min={0} value={planning.maxPrepActiveLaborMinutesPerDay ?? 0} onChange={(event) => updatePlanning({ maxPrepActiveLaborMinutesPerDay: numeric(event.target.value) })}/>
+        <SelectField label="需要Source" value={planning.demandSource.type === 'forecastSnapshot' ? planning.demandSource.forecastId ?? '' : ''} onChange={(event) => updatePlanning({ demandSource: event.target.value ? { type: 'forecastSnapshot', forecastId: event.target.value, demandCase: 'point', sampleUncertainty: false } : { type: 'base' } })}><option value="">Base / Manual Plan</option>{settings.demandForecasts.map((forecast) => <option key={forecast.id} value={forecast.id}>{forecast.name}</option>)}</SelectField>
+        {planning.demandSource.type === 'forecastSnapshot' && <SelectField label="Forecast需要ケース" value={planning.demandSource.demandCase ?? 'point'} onChange={(event) => updatePlanning({ demandSource: { ...planning.demandSource, demandCase: event.target.value as PlanningSettings['demandSource']['demandCase'] } })}><option value="point">中心</option><option value="lower">低需要</option><option value="upper">高需要</option><option value="bootstrap">Residual bootstrap</option></SelectField>}
       </div>
+      {planning.demandSource.type === 'forecastSnapshot' && <Toggle checked={planning.demandSource.sampleUncertainty ?? false} onChange={(checked) => updatePlanning({ demandSource: { ...planning.demandSource, sampleUncertainty: checked } })} label="Monte CarloでForecast uncertaintyを日別Residualからsampling"/>}
     </Panel>
 
     <Panel title="曜日別 Operating Plan" caption="Base営業条件へ曜日Templateを重ねます。StaffはShift単位、需要は食数単位でOverrideします。">

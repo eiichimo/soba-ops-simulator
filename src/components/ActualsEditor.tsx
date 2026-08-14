@@ -11,7 +11,7 @@ import {
 } from '../calculations/decisionSupport'
 import type { ActualPeriod, ActualResourceRecord, ActualValues, AppSettings, Unit } from '../models/types'
 import { formatNumber, formatPercent, formatYen } from '../utils/format'
-import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, TextField } from './ui'
+import { Badge, Button, EmptyState, NumberField, PageTitle, Panel, TextField, Toggle } from './ui'
 
 type Props = { settings: AppSettings; onChange: (settings: AppSettings) => void }
 
@@ -27,6 +27,10 @@ const addDays = (dateText: string, days: number) => {
 const emptyActualValues = (): ActualValues => ({
   menuSales: [],
   resourceRecords: [],
+  laborRecords: [],
+  wasteRecords: [],
+  inventoryRecords: [],
+  dailyDemandRecords: [],
   utilities: { water: {}, gas: {}, electricity: {} },
 })
 
@@ -132,13 +136,19 @@ export const ActualsEditor = ({ settings, onChange }: Props) => {
     </Panel>
 
     <div className="dashboard-grid actual-input-grid">
-      <Panel title="売上・営業実績">
+      <Panel title="売上・営業実績" caption="単日Actualでは来店人数を需要Observationとして優先します。複数日の需要履歴は売上CSVの日次集計を使用します。">
         <div className="form-grid form-grid-2">
           <NumberField label="総売上" suffix="円" min={0} value={inputValue(actuals.revenue)} onChange={(event) => updateActuals({ revenue: optionalNumber(event.target.value) })}/>
           <NumberField label="総販売食数" suffix="食" min={0} value={inputValue(actuals.meals)} onChange={(event) => updateActuals({ meals: optionalNumber(event.target.value) })}/>
+          <NumberField label="実来店人数（任意）" suffix="人" min={0} value={inputValue(actuals.guestCount)} onChange={(event) => updateActuals({ guestCount: optionalNumber(event.target.value) })} hint="販売食数より優先して需要Observationに使用"/>
+          <NumberField label="明示的な需要実績（任意）" suffix="人" min={0} value={inputValue(actuals.demandCount)} onChange={(event) => updateActuals({ demandCount: optionalNumber(event.target.value) })}/>
           <NumberField label="営業日数" suffix="日" min={0} value={inputValue(actuals.operatingDays)} onChange={(event) => updateActuals({ operatingDays: optionalNumber(event.target.value) })}/>
           <NumberField label="総営業時間" suffix="時間" min={0} value={inputValue(actuals.operatingHours)} onChange={(event) => updateActuals({ operatingHours: optionalNumber(event.target.value) })}/>
+          <NumberField label="欠品による失注" suffix="食" min={0} value={inputValue(actuals.stockoutLostMeals)} onChange={(event) => updateActuals({ stockoutLostMeals: optionalNumber(event.target.value) })}/>
+          <NumberField label="席待ち離脱" suffix="人" min={0} value={inputValue(actuals.abandonmentGuests)} onChange={(event) => updateActuals({ abandonmentGuests: optionalNumber(event.target.value) })}/>
+          <NumberField label="厨房未処理" suffix="食" min={0} value={inputValue(actuals.capacityUnservedMeals)} onChange={(event) => updateActuals({ capacityUnservedMeals: optionalNumber(event.target.value) })}/>
         </div>
+        <Toggle checked={actuals.earlyClosing ?? false} onChange={(checked) => updateActuals({ earlyClosing: checked })} label="臨時早仕舞い・不完全営業日"/>
         <details className="actual-menu-sales"><summary>メニュー別販売食数（任意）</summary><div>{settings.menuItems.map((menu) => <label key={menu.id}><span>{menu.name}</span><input type="number" min="0" step="any" value={inputValue(actuals.menuSales.find((sale) => sale.menuItemId === menu.id)?.quantity)} onChange={(event) => updateMenuSale(menu.id, optionalNumber(event.target.value))}/><b>食</b></label>)}</div></details>
       </Panel>
       <Panel title="原価・在庫・仕入">

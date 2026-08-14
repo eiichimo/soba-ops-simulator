@@ -332,4 +332,39 @@ describe('settings validation', () => {
     const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
     expect(codes).toEqual(expect.arrayContaining(['invalid-calibration-settings', 'invalid-calibration-history']))
   })
+
+  it('Phase 10の不正Forecast設定をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.forecastSettings.method = 'unknown' as never
+    settings.forecastSettings.horizonDays = 0
+    settings.forecastSettings.windowSize = 0
+    settings.forecastSettings.trainingWindow = 'custom'
+    settings.forecastSettings.trainingStart = '2026-09-02'
+    settings.forecastSettings.trainingEnd = '2026-09-01'
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-forecast-method', 'invalid-forecast-horizon', 'invalid-forecast-window', 'invalid-forecast-training-range']))
+  })
+
+  it('Phase 10の日次Observation値と重複日付をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.actualPeriods = [{ id: 'actual', name: '実績', startDate: '2026-08-01', endDate: '2026-08-02', actuals: { menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} }, dailyDemandRecords: [{ date: '2026-08-01', salesCount: -1 }, { date: '2026-08-01', guestCount: 10 }] } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['invalid-demand-observation', 'duplicate-demand-observation-date']))
+  })
+
+  it('Phase 10の不存在Forecast参照をErrorにする', () => {
+    const settings = createSampleSettings()
+    settings.planning.demandSource = { type: 'forecastSnapshot', forecastId: 'missing' }
+    settings.optimizationStudies[0].demandForecastId = 'missing'
+    settings.scenarios = [{ id: 'scenario', name: 'Forecast', overrides: { planningDemandSource: { type: 'forecastSnapshot', forecastId: 'missing' } } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['missing-planning-forecast', 'missing-optimization-forecast', 'missing-scenario-forecast']))
+  })
+
+  it('Phase 10の販売数Fallbackと履歴不足をWarningにする', () => {
+    const settings = createSampleSettings()
+    settings.actualPeriods = [{ id: 'actual', name: '実績', startDate: '2026-08-01', endDate: '2026-08-01', actuals: { meals: 80, menuSales: [], resourceRecords: [], utilities: { water: {}, gas: {}, electricity: {} } } }]
+    const codes = validateSettings(settings).map((validationIssue) => validationIssue.code)
+    expect(codes).toEqual(expect.arrayContaining(['sales-demand-proxy', 'insufficient-observations']))
+  })
 })

@@ -277,11 +277,17 @@ const demandSlotsForMeals = (settings: AppSettings, mealsPerDay: number) => {
 export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario): AppSettings => {
   const overrides = scenario.overrides
   const mealsPerDay = overrides.business?.mealsPerDay ?? settings.business.mealsPerDay
+  const forecastDailyPlans = Object.entries(overrides.planningDailyDemandOverrides ?? {}).reduce((plans, [date, meals]) => {
+    const existing = plans.find((plan) => plan.date === date)
+    if (existing) return plans.map((plan) => plan.date === date ? { ...plan, mealsPerDay: Math.max(0, meals) } : plan)
+    return [...plans, { id: `scenario-demand-${date}`, date, mealsPerDay: Math.max(0, meals) }]
+  }, settings.planning.dailyOperatingPlans.map((plan) => ({ ...plan })))
   let result: AppSettings = {
     ...settings,
     business: {
       ...settings.business,
       mealsPerDay,
+      simulationStartDate: overrides.business?.simulationStartDate ?? settings.business.simulationStartDate,
     },
     menuItems: settings.menuItems.map((menu) => ({
       ...menu,
@@ -347,6 +353,8 @@ export const applyScenarioOverrides = (settings: AppSettings, scenario: Scenario
     },
     planning: {
       ...settings.planning,
+      demandSource: overrides.planningDemandSource ?? settings.planning.demandSource,
+      dailyOperatingPlans: forecastDailyPlans,
       weekdayTemplates: settings.planning.weekdayTemplates.map((template) => ({
         ...template,
         openingTime: overrides.weekdayOpeningTimeOverrides?.[String(template.day)] ?? template.openingTime,
